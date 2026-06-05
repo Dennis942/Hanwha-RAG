@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="1080" viewBox="0 0 1440 1080">
+  <defs><style>
+    .bg{fill:#fff}.side{fill:#f7f7f8}.line{stroke:#dedede;stroke-width:1}.ink{fill:#171717}.muted{fill:#666}.orange{fill:#f37321}.light{fill:#f8f8f8;stroke:#dedede}.panel{fill:#fff;stroke:#dedede}.black{fill:#111}.white{fill:#fff}.t1{font:700 32px Arial,sans-serif}.t2{font:700 22px Arial,sans-serif}.t3{font:700 16px Arial,sans-serif}.body{font:14px Arial,sans-serif}.small{font:12px Arial,sans-serif}
+  </style></defs>
+  <rect class="bg" width="1440" height="1080"/>
+  <rect class="side" width="280" height="1080"/><line class="line" x1="280" x2="280" y1="0" y2="1080"/>
+  <ellipse cx="52" cy="54" rx="25" ry="15" fill="none" stroke="#f37321" stroke-width="5" transform="rotate(-20 52 54)"/>
+  <ellipse cx="63" cy="60" rx="21" ry="15" fill="none" stroke="#f89b61" stroke-width="4" transform="rotate(24 63 60)"/>
+  <ellipse cx="66" cy="50" rx="19" ry="18" fill="none" stroke="#ffb37a" stroke-width="4" transform="rotate(14 66 50)"/>
+  <text class="ink" style="font:700 26px Arial" x="92" y="55">Eagle Next</text><text class="muted small" x="92" y="76">Hanwha Work AI</text><text class="muted t2" x="246" y="58">↤</text>
+  <rect class="panel" x="20" y="112" width="240" height="50" rx="8"/><text class="orange t3" x="88" y="143">＋ New Chat</text>
+  <rect class="black" x="20" y="206" width="240" height="42" rx="8"/><text class="white t3" x="42" y="233">메인 챗봇</text>
+  <text class="muted t3" x="42" y="292">Q&amp;A</text><text class="muted t3" x="42" y="338">업무 검색</text><text class="muted t3" x="42" y="384">문서 관리</text><text class="muted t3" x="42" y="430">프로젝트</text><text class="muted t3" x="42" y="476">관리자</text>
+  <line class="line" x1="20" x2="260" y1="520" y2="520"/><text class="muted small" x="42" y="556">최근 업무 히스토리</text>
+  <text class="muted body" x="42" y="594">RAG MVP 우선 구현 화면</text><text class="muted body" x="42" y="632">외부망 접근 보안 조건</text><text class="muted body" x="42" y="670">운영 장애 재발 방지 조치</text>
+  <line class="line" x1="20" x2="260" y1="926" y2="926"/><text class="ink t3" x="42" y="960">DA플랫폼팀 관리자</text><text class="muted small" x="42" y="982">admin@company.example</text><text class="muted small" x="62" y="1034">POWERED BY HANWHA AI</text>
+  <text class="orange t3" x="324" y="50">Hanwha Work AI</text><text class="ink t1" x="324" y="88">업무 히스토리 AI 플랫폼</text>
+  <rect class="panel" x="340" y="792" width="1040" height="118" rx="9"/><text class="muted" style="font:20px Arial" x="360" y="836">What task can I help you with?</text><text class="muted t2" x="362" y="880">▦</text><text class="muted t2" x="406" y="880">⇧</text><text class="muted t2" x="450" y="880">▣</text><rect class="orange" x="1314" y="840" width="48" height="48" rx="7"/><text class="white" style="font:34px Arial" x="1332" y="874">›</text>
+  <rect fill="#fff3eb" x="794" y="202" width="132" height="30" rx="8"/><text class="orange small" x="808" y="220">Recommendation</text>
+  <text class="ink t2" x="728" y="276">어떤 업무를 도와드릴까요?</text>
+  <rect class="light" x="454" y="330" width="260" height="112" rx="8"/><text class="orange t2" x="574" y="366">✦</text><text class="ink t3" x="512" y="402">최근 결정사항 요약해줘</text>
+  <rect class="light" x="730" y="330" width="260" height="112" rx="8"/><text class="orange t2" x="850" y="366">✦</text><text class="ink t3" x="786" y="402">계약서 보안 조건 찾아줘</text>
+  <rect class="light" x="1006" y="330" width="260" height="112" rx="8"/><text class="orange t2" x="1126" y="366">✦</text><text class="ink t3" x="1060" y="402">운영 장애 이력 알려줘</text>
+</svg>
