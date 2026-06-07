@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Archive,
   CircleArrowRight,
@@ -21,11 +21,14 @@ import {
   Upload,
 } from "lucide-react";
 import { Badge, FieldLabel, Panel, SectionHeader } from "@/components/ui";
-import { currentUser, documents, ingestionJobs, projects, recentQuestions, tags } from "@/lib/mock-data";
+import { currentUser, documents, projects, recentQuestions, tags } from "@/lib/mock-data";
 import { askKnowledgeBase, searchWorkHistory } from "@/lib/rag-service";
+import { isSupabaseConfigured, supabase, type SupabaseDocument } from "@/lib/supabase";
+import type { ChangeEvent } from "react";
 import type { LucideIcon } from "lucide-react";
 
 const statusTone = {
+  uploaded: "blue",
   Uploaded: "blue",
   Pending: "amber",
   Processing: "amber",
@@ -34,6 +37,30 @@ const statusTone = {
   Reprocessing: "blue",
   Deleted: "neutral"
 } as const;
+
+const allowedDocumentExtensions = ["pdf", "txt", "docx"] as const;
+
+function getStatusTone(status: string) {
+  return statusTone[status as keyof typeof statusTone] ?? "neutral";
+}
+
+function getFileExtension(fileName: string) {
+  return fileName.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function makeStoragePath(file: File) {
+  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+  const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}`;
+
+  return `uploads/${id}-${safeName}`;
+}
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "medium",
+    timeStyle: "short"
+  }).format(new Date(value));
+}
 
 const nav = [
   { id: "dashboard", label: "메인 챗봇", icon: LayoutDashboard },
@@ -468,26 +495,128 @@ function SearchPage(props: {
 }
 
 function DocumentsPage() {
+  const [documentRows, setDocumentRows] = useState<SupabaseDocument[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isUploading, setIsUploading] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    void loadDocuments();
+  }, []);
+
+  async function loadDocuments() {
+    if (!supabase) {
+      setIsLoading(false);
+      setError("Supabase 환경변수가 설정되지 않았습니다.");
+      return;
+    }
+
+    setIsLoading(true);
+    setError("");
+
+    const { data, error: loadError } = await supabase
+      .from("documents")
+      .select("id,title,file_path,file_type,status,created_at")
+      .order("created_at", { ascending: false });
+
+    if (loadError) {
+      setError(loadError.message);
+      setDocumentRows([]);
+    } else {
+      setDocumentRows(data ?? []);
+    }
+
+    setIsLoading(false);
+  }
+
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) {
+      return;
+    }
+
+    if (!supabase) {
+      setError("Supabase 환경변수가 설정되지 않았습니다.");
+      return;
+    }
+
+    const fileType = getFileExtension(file.name);
+
+    if (!allowedDocumentExtensions.includes(fileType as (typeof allowedDocumentExtensions)[number])) {
+      setError("PDF, TXT, DOCX 파일만 업로드할 수 있습니다.");
+      setMessage("");
+      return;
+    }
+
+    setIsUploading(true);
+    setError("");
+    setMessage("");
+
+    const filePath = makeStoragePath(file);
+    const { error: uploadError } = await supabase.storage.from("documents").upload(filePath, file, {
+      cacheControl: "3600",
+      upsert: false
+    });
+
+    if (uploadError) {
+      setError(uploadError.message);
+      setIsUploading(false);
+      return;
+    }
+
+    const { error: insertError } = await supabase.from("documents").insert({
+      title: file.name,
+      file_path: filePath,
+      file_type: fileType,
+      status: "uploaded",
+      created_at: new Date().toISOString()
+    });
+
+    if (insertError) {
+      setError(insertError.message);
+      setIsUploading(false);
+      return;
+    }
+
+    setMessage(`${file.name} 업로드가 완료되었습니다.`);
+    setIsUploading(false);
+    await loadDocuments();
+  }
+
   return (
     <div className="space-y-5">
       <Panel>
-        <SectionHeader title="문서 업로드" action={<Badge tone="amber">Mock upload</Badge>} />
+        <SectionHeader title="문서 업로드" action={<Badge tone={isSupabaseConfigured ? "green" : "red"}>{isSupabaseConfigured ? "Supabase 연결" : "설정 필요"}</Badge>} />
         <div className="p-5">
           <PageIntro
             title="문서 업로드 및 인덱싱 요청"
-            description="PDF, DOCX, TXT 파일을 등록하면 추후 Supabase Storage와 인덱싱 작업 테이블에 연결될 영역입니다."
+            description="PDF, DOCX, TXT 파일을 등록하면 Supabase Storage documents bucket에 저장하고 documents 테이블에 업로드 상태를 기록합니다."
           />
           <div className="flex min-h-40 flex-col items-center justify-center rounded-md border-2 border-dashed border-line bg-field text-center">
             <Upload className="text-ocean" size={30} aria-hidden />
-            <p className="mt-3 font-semibold text-ink">계약서, 회의록, 결정사항 문서를 끌어다 놓기</p>
-            <p className="mt-1 text-sm text-slate-500">PDF, DOCX, TXT, CSV 파일을 mock 업로드 큐에 추가합니다.</p>
-            <button className="mt-4 rounded-md bg-ocean px-4 py-2 text-sm font-semibold text-white">파일 선택</button>
+            <p className="mt-3 font-semibold text-ink">PDF, TXT, DOCX 문서를 업로드하세요</p>
+            <p className="mt-1 text-sm text-slate-500">선택한 파일은 documents bucket에 저장되고 목록에 즉시 반영됩니다.</p>
+            <label className={`mt-4 inline-flex cursor-pointer rounded-md px-4 py-2 text-sm font-semibold text-white ${isUploading ? "bg-slate-400" : "bg-ocean"}`}>
+              {isUploading ? "업로드 중" : "파일 선택"}
+              <input
+                type="file"
+                accept=".pdf,.txt,.docx,application/pdf,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                className="sr-only"
+                disabled={isUploading}
+                onChange={handleFileChange}
+              />
+            </label>
           </div>
+          {message && <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</p>}
+          {error && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
         </div>
       </Panel>
       <Panel>
-        <SectionHeader title="문서 목록" />
-        <DocumentTable />
+        <SectionHeader title="문서 목록" action={<button type="button" onClick={() => void loadDocuments()} className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-xs font-semibold text-slate-700"><RefreshCcw size={14} aria-hidden />새로고침</button>} />
+        <SupabaseDocumentTable documents={documentRows} isLoading={isLoading} />
       </Panel>
     </div>
   );
@@ -559,53 +688,53 @@ function ProjectPage() {
 }
 
 function AdminPage() {
+  const [documentRows, setDocumentRows] = useState<SupabaseDocument[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function loadDocuments() {
+      if (!supabase) {
+        setIsLoading(false);
+        setError("Supabase 환경변수가 설정되지 않았습니다.");
+        return;
+      }
+
+      const { data, error: loadError } = await supabase
+        .from("documents")
+        .select("id,title,file_path,file_type,status,created_at")
+        .order("created_at", { ascending: false });
+
+      if (loadError) {
+        setError(loadError.message);
+      } else {
+        setDocumentRows(data ?? []);
+      }
+
+      setIsLoading(false);
+    }
+
+    void loadDocuments();
+  }, []);
+
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
       <Panel>
-        <SectionHeader title="인덱싱 상태" action={<Badge tone="red">실패 재처리</Badge>} />
+        <SectionHeader title="인덱싱 상태" action={<Badge tone="blue">documents 테이블</Badge>} />
         <div className="p-5 pb-0">
           <PageIntro
             title="문서 인덱싱 운영 콘솔"
-            description="업로드된 문서의 추출, 청킹, 임베딩, 재처리 상태를 확인하고 실패 작업을 다시 실행하는 관리자 화면입니다."
+            description="이번 1단계에서는 업로드된 문서가 documents 테이블에 uploaded 상태로 저장되었는지 확인합니다."
           />
+          {error && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-sm">
-            <thead className="bg-field text-xs uppercase text-slate-500">
-              <tr>
-                <th className="px-5 py-3">Job</th>
-                <th className="px-5 py-3">문서</th>
-                <th className="px-5 py-3">상태</th>
-                <th className="px-5 py-3">시작</th>
-                <th className="px-5 py-3">완료</th>
-                <th className="px-5 py-3">작업</th>
-              </tr>
-            </thead>
-            <tbody>
-              {ingestionJobs.map((job) => {
-                const document = documents.find((item) => item.id === job.documentId);
-                return (
-                  <tr key={job.id} className="border-t border-line">
-                    <td className="px-5 py-4 font-semibold">{job.id}</td>
-                    <td className="px-5 py-4">{document?.title}</td>
-                    <td className="px-5 py-4"><Badge tone={statusTone[job.status]}>{job.status}</Badge></td>
-                    <td className="px-5 py-4">{job.startedAt}</td>
-                    <td className="px-5 py-4">{job.completedAt ?? "-"}</td>
-                    <td className="px-5 py-4">
-                      {job.status === "Failed" && <button className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-xs font-semibold"><RefreshCcw size={14} aria-hidden />재처리</button>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+        <SupabaseDocumentTable documents={documentRows} isLoading={isLoading} />
       </Panel>
       <Panel>
         <SectionHeader title="관리자 알림" />
         <div className="space-y-3 p-5">
-          <p className="rounded-md border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">검색 품질 평가 기준 문서의 본문 추출에 실패했습니다.</p>
-          <p className="rounded-md border border-line bg-field p-3 text-sm text-slate-700">감사 로그 보존 정책이 계약 조건과 일치하는지 확인이 필요합니다.</p>
+          <p className="rounded-md border border-line bg-field p-3 text-sm text-slate-700">OpenAI 임베딩과 답변 생성은 아직 연결하지 않았습니다.</p>
+          <p className="rounded-md border border-line bg-field p-3 text-sm text-slate-700">다음 단계에서 추출, 청킹, 임베딩 작업 상태를 별도 테이블로 확장할 수 있습니다.</p>
         </div>
       </Panel>
     </div>
@@ -658,6 +787,43 @@ function Filters(props: { projectFilter: string; setProjectFilter: (value: strin
         <option value="">전체 태그</option>
         {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
       </select>
+    </div>
+  );
+}
+
+function SupabaseDocumentTable({ documents, isLoading }: { documents: SupabaseDocument[]; isLoading: boolean }) {
+  if (isLoading) {
+    return <p className="p-5 text-sm text-slate-500">문서 목록을 불러오는 중입니다.</p>;
+  }
+
+  if (documents.length === 0) {
+    return <p className="p-5 text-sm text-slate-500">아직 업로드된 문서가 없습니다.</p>;
+  }
+
+  return (
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-[760px] text-left text-sm">
+        <thead className="bg-field text-xs uppercase text-slate-500">
+          <tr>
+            <th className="px-5 py-3">문서명</th>
+            <th className="px-5 py-3">파일 유형</th>
+            <th className="px-5 py-3">Storage 경로</th>
+            <th className="px-5 py-3">업로드 일시</th>
+            <th className="px-5 py-3">상태</th>
+          </tr>
+        </thead>
+        <tbody>
+          {documents.map((document) => (
+            <tr key={document.id} className="border-t border-line">
+              <td className="px-5 py-4 font-semibold text-ink">{document.title}</td>
+              <td className="px-5 py-4 uppercase">{document.file_type}</td>
+              <td className="max-w-[320px] truncate px-5 py-4 text-slate-600">{document.file_path}</td>
+              <td className="px-5 py-4">{formatDateTime(document.created_at)}</td>
+              <td className="px-5 py-4"><Badge tone={getStatusTone(document.status)}>{document.status}</Badge></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   );
 }
