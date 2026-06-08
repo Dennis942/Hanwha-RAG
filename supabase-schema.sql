@@ -3,6 +3,40 @@
 
 create extension if not exists vector;
 
+create table if not exists public.projects (
+  id uuid primary key default gen_random_uuid(),
+  name text not null,
+  description text,
+  status text default '진행',
+  category text,
+  tags text[] default '{}'::text[],
+  objective text,
+  owner text,
+  start_date date,
+  end_date date,
+  memo text,
+  decisions jsonb default '[]'::jsonb,
+  timeline jsonb default '[]'::jsonb,
+  archived boolean default false,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.projects add column if not exists description text;
+alter table public.projects add column if not exists status text default '진행';
+alter table public.projects add column if not exists category text;
+alter table public.projects add column if not exists tags text[] default '{}'::text[];
+alter table public.projects add column if not exists objective text;
+alter table public.projects add column if not exists owner text;
+alter table public.projects add column if not exists start_date date;
+alter table public.projects add column if not exists end_date date;
+alter table public.projects add column if not exists memo text;
+alter table public.projects add column if not exists decisions jsonb default '[]'::jsonb;
+alter table public.projects add column if not exists timeline jsonb default '[]'::jsonb;
+alter table public.projects add column if not exists archived boolean default false;
+alter table public.projects add column if not exists created_at timestamptz not null default now();
+alter table public.projects add column if not exists updated_at timestamptz not null default now();
+
 create table if not exists public.documents (
   id uuid primary key default gen_random_uuid(),
   title text not null,
@@ -24,6 +58,14 @@ add column if not exists file_size bigint;
 
 alter table public.documents
 add column if not exists error_message text;
+
+alter table public.documents add column if not exists project_id uuid;
+alter table public.documents add column if not exists project_name text;
+alter table public.documents add column if not exists category text;
+alter table public.documents add column if not exists document_type text;
+alter table public.documents add column if not exists tags text[] default '{}'::text[];
+alter table public.documents add column if not exists description text;
+alter table public.documents add column if not exists updated_at timestamptz not null default now();
 
 do $$
 begin
@@ -103,6 +145,24 @@ on public.documents (file_path);
 create index if not exists documents_created_at_idx
 on public.documents (created_at desc);
 
+create index if not exists documents_title_idx
+on public.documents (title);
+
+create index if not exists documents_project_id_idx
+on public.documents (project_id);
+
+create index if not exists documents_project_name_idx
+on public.documents (project_name);
+
+create index if not exists documents_category_idx
+on public.documents (category);
+
+create index if not exists documents_status_idx
+on public.documents (status);
+
+create index if not exists projects_updated_at_idx
+on public.projects (updated_at desc);
+
 create table if not exists public.document_chunks (
   id uuid primary key default gen_random_uuid(),
   document_id uuid not null references public.documents(id) on delete cascade,
@@ -140,7 +200,12 @@ using hnsw (embedding vector_cosine_ops);
 
 create or replace function public.match_document_chunks (
   query_embedding vector(1536),
-  match_count integer default 5
+  match_count integer default 5,
+  filter_project_id uuid default null,
+  filter_project_name text default null,
+  filter_category text default null,
+  filter_document_type text default null,
+  filter_tag text default null
 )
 returns table (
   id uuid,
@@ -161,6 +226,19 @@ as $$
     document_chunks.metadata,
     1 - (document_chunks.embedding <=> query_embedding) as similarity
   from public.document_chunks
+  where
+    (filter_project_id is null or (document_chunks.metadata->>'project_id')::uuid = filter_project_id)
+    and (filter_project_name is null or document_chunks.metadata->>'project_name' = filter_project_name)
+    and (filter_category is null or document_chunks.metadata->>'category' = filter_category)
+    and (filter_document_type is null or document_chunks.metadata->>'document_type' = filter_document_type)
+    and (
+      filter_tag is null
+      or exists (
+        select 1
+        from jsonb_array_elements_text(coalesce(document_chunks.metadata->'tags', '[]'::jsonb)) as tag(value)
+        where tag.value = filter_tag
+      )
+    )
   order by document_chunks.embedding <=> query_embedding
   limit match_count;
 $$;
@@ -170,12 +248,27 @@ create table if not exists public.chat_logs (
   question text not null,
   answer text not null,
   sources jsonb not null default '[]'::jsonb,
+  filters jsonb not null default '{}'::jsonb,
+  project_id uuid,
+  project_name text,
   created_at timestamptz not null default now()
 );
 
+alter table public.chat_logs add column if not exists filters jsonb not null default '{}'::jsonb;
+alter table public.chat_logs add column if not exists project_id uuid;
+alter table public.chat_logs add column if not exists project_name text;
+
+alter table public.projects enable row level security;
 alter table public.documents enable row level security;
 alter table public.document_chunks enable row level security;
 alter table public.chat_logs enable row level security;
+
+drop policy if exists "Allow project read" on public.projects;
+create policy "Allow project read"
+on public.projects
+for select
+to anon
+using (true);
 
 drop policy if exists "Allow document list read" on public.documents;
 create policy "Allow document list read"
@@ -209,6 +302,12 @@ on public.chat_logs
 for select
 to anon
 using (true);
+
+create index if not exists chat_logs_project_id_idx
+on public.chat_logs (project_id);
+
+create index if not exists chat_logs_created_at_idx
+on public.chat_logs (created_at desc);
 
 insert into storage.buckets (id, name, public)
 values ('documents', 'documents', false)
