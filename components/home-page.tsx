@@ -57,8 +57,8 @@ type UploadDebugInfo = {
   storageUploadStarted: boolean;
   bucketName: string;
   filePath?: string;
-  serverStep?: string;
-  serverDiagnosticsJson?: string;
+  registerStep?: string;
+  registerResponseJson?: string;
   storagePath?: string;
   uploadErrorJson?: string;
   networkError?: {
@@ -66,24 +66,21 @@ type UploadDebugInfo = {
     message?: string;
     stack?: string;
   };
-  insertStarted: boolean;
-  insertErrorJson?: string;
+  registerStarted: boolean;
+  registerErrorJson?: string;
 };
 
-type UploadApiResponse = {
+type RegisterApiResponse = {
   ok: boolean;
   step?: string;
   message?: string;
   fileName?: string;
   fileType?: string;
   fileSize?: number;
-  maxFileSize?: number;
   bucketName?: string;
   filePath?: string;
-  uploadToken?: string;
   storagePath?: string;
-  uploadErrorJson?: string;
-  insertErrorJson?: string;
+  registerErrorJson?: string;
   networkError?: {
     name?: string;
     message?: string;
@@ -97,6 +94,10 @@ function getStatusTone(status: string) {
 
 function getFileExtension(fileName: string) {
   return fileName.split(".").pop()?.toLowerCase() ?? "";
+}
+
+function makeStoragePath(fileType: string) {
+  return `uploads/${crypto.randomUUID()}.${fileType}`;
 }
 
 function formatDateTime(value: string) {
@@ -571,35 +572,12 @@ function DocumentsPage() {
   const [uploadDebugInfo, setUploadDebugInfo] = useState<UploadDebugInfo>({
     storageUploadStarted: false,
     bucketName: documentsBucketName,
-    insertStarted: false
+    registerStarted: false
   });
 
   useEffect(() => {
     void loadDocuments();
-    void loadUploadDiagnostics();
   }, []);
-
-  async function loadUploadDiagnostics() {
-    try {
-      const response = await fetch("/api/documents/upload", {
-        method: "GET"
-      });
-      const responseText = await response.text();
-
-      setUploadDebugInfo((current) => ({
-        ...current,
-        serverStep: response.ok ? "bucket-check" : "bucket-check-failed",
-        serverDiagnosticsJson: responseText
-      }));
-    } catch (diagnosticsError) {
-      setUploadDebugInfo((current) => ({
-        ...current,
-        serverStep: "diagnostics-network",
-        networkError: getNetworkError(diagnosticsError),
-        serverDiagnosticsJson: stringifyDebugValue(diagnosticsError)
-      }));
-    }
-  }
 
   async function loadDocuments() {
     if (!supabase) {
@@ -655,7 +633,7 @@ function DocumentsPage() {
         selectedFile: file.name,
         selectedFileType: fileType.toUpperCase(),
         selectedFileSize: file.size,
-        serverStep: "validation"
+        registerStep: "validation"
       }));
       return;
     }
@@ -664,182 +642,125 @@ function DocumentsPage() {
     setError("");
     setMessage("");
 
+    const filePath = makeStoragePath(fileType);
+
     setUploadDebugInfo({
       selectedFile: file.name,
       selectedFileType: fileType.toUpperCase(),
       selectedFileSize: file.size,
       storageUploadStarted: true,
       bucketName: documentsBucketName,
-      filePath: "서버에서 UUID 기반 경로 생성",
-      insertStarted: false
+      filePath,
+      registerStarted: false
     });
 
     try {
-      const prepareResponse = await fetch("/api/documents/upload", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          action: "prepare",
-          fileName: file.name,
-          fileSize: file.size
-        })
-      });
-      const prepareResponseText = await prepareResponse.text();
-      let prepareData: UploadApiResponse;
-
-      try {
-        prepareData = JSON.parse(prepareResponseText) as UploadApiResponse;
-      } catch {
-        prepareData = {
-          ok: false,
-          step: "api-response",
-          message: prepareResponseText || `업로드 API가 ${prepareResponse.status} 상태를 반환했습니다.`,
-          uploadErrorJson: prepareResponseText
-        };
-      }
-
-      if (!prepareResponse.ok || !prepareData.ok || !prepareData.filePath || !prepareData.uploadToken) {
-        setUploadDebugInfo((current) => ({
-          ...current,
-          bucketName: prepareData.bucketName ?? current.bucketName,
-          filePath: prepareData.filePath ?? current.filePath,
-          selectedFile: prepareData.fileName ?? current.selectedFile,
-          selectedFileType: prepareData.fileType ?? current.selectedFileType,
-          selectedFileSize: prepareData.fileSize ?? current.selectedFileSize,
-          serverStep: prepareData.step,
-          serverDiagnosticsJson: stringifyDebugValue(prepareData),
-          storagePath: prepareData.storagePath,
-          uploadErrorJson: prepareData.uploadErrorJson,
-          networkError: prepareData.networkError,
-          insertStarted: prepareData.step === "documents-insert",
-          insertErrorJson: prepareData.insertErrorJson
-        }));
-        setError(prepareData.message || "업로드 준비에 실패했습니다.");
-        setIsUploading(false);
-        return;
-      }
-
-      setUploadDebugInfo((current) => ({
-        ...current,
-        bucketName: prepareData.bucketName ?? current.bucketName,
-        filePath: prepareData.filePath,
-        selectedFile: prepareData.fileName ?? current.selectedFile,
-        selectedFileType: prepareData.fileType ?? current.selectedFileType,
-        selectedFileSize: prepareData.fileSize ?? current.selectedFileSize,
-        serverStep: "prepared",
-        serverDiagnosticsJson: stringifyDebugValue(prepareData)
-      }));
-
-      const { error: signedUploadError } = await supabase.storage
+      const { data: uploadData, error: storageError } = await supabase.storage
         .from(documentsBucketName)
-        .uploadToSignedUrl(
-          prepareData.filePath,
-          prepareData.uploadToken,
-          file,
-          {
-            cacheControl: "3600",
-            contentType: contentTypes[fileType as (typeof allowedDocumentExtensions)[number]],
-            metadata: {
-              title: file.name,
-              originalFileName: file.name
-            }
-          }
-        );
+        .upload(filePath, file, {
+          cacheControl: "3600",
+          contentType: contentTypes[fileType as (typeof allowedDocumentExtensions)[number]],
+          metadata: {
+            title: file.name,
+            originalFileName: file.name,
+            fileSize: String(file.size)
+          },
+          upsert: false
+        });
 
-      if (signedUploadError) {
-        const uploadErrorJson = stringifyDebugValue(signedUploadError);
+      if (storageError) {
+        const uploadErrorJson = stringifyDebugValue(storageError);
         setUploadDebugInfo((current) => ({
           ...current,
-          serverStep: "storage-upload",
+          registerStep: "storage-upload-failed",
           storagePath: undefined,
           uploadErrorJson
         }));
-        setError(signedUploadError.message || uploadErrorJson);
+        setError(storageError.message || uploadErrorJson);
         setIsUploading(false);
         return;
       }
 
+      const storagePath = uploadData?.path ?? filePath;
+
       setUploadDebugInfo((current) => ({
         ...current,
-        serverStep: "storage-upload-complete",
-        storagePath: prepareData.filePath,
-        insertStarted: true
+        registerStep: "storage-upload-complete",
+        storagePath,
+        registerStarted: true
       }));
 
-      const completeResponse = await fetch("/api/documents/upload", {
+      const registerResponse = await fetch("/api/documents/register", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
         },
         body: JSON.stringify({
-          action: "complete",
           title: file.name,
-          fileName: file.name,
-          filePath: prepareData.filePath,
-          fileSize: file.size
+          file_path: storagePath,
+          file_type: fileType.toUpperCase(),
+          file_size: file.size
         })
       });
-      const completeResponseText = await completeResponse.text();
-      let completeData: UploadApiResponse;
+      const registerResponseText = await registerResponse.text();
+      let registerData: RegisterApiResponse;
 
       try {
-        completeData = JSON.parse(completeResponseText) as UploadApiResponse;
+        registerData = JSON.parse(registerResponseText) as RegisterApiResponse;
       } catch {
-        completeData = {
+        registerData = {
           ok: false,
           step: "api-response",
-          message: completeResponseText || `업로드 완료 API가 ${completeResponse.status} 상태를 반환했습니다.`,
-          insertErrorJson: completeResponseText
+          message: registerResponseText || `문서 등록 API가 ${registerResponse.status} 상태를 반환했습니다.`,
+          registerErrorJson: registerResponseText
         };
       }
 
-      if (!completeResponse.ok || !completeData.ok) {
+      if (!registerResponse.ok || !registerData.ok) {
         setUploadDebugInfo((current) => ({
           ...current,
-          bucketName: completeData.bucketName ?? current.bucketName,
-          filePath: completeData.filePath ?? current.filePath,
-          selectedFile: completeData.fileName ?? current.selectedFile,
-          selectedFileType: completeData.fileType ?? current.selectedFileType,
-          selectedFileSize: completeData.fileSize ?? current.selectedFileSize,
-          serverStep: completeData.step,
-          serverDiagnosticsJson: stringifyDebugValue(completeData),
-          storagePath: completeData.storagePath ?? current.storagePath,
-          networkError: completeData.networkError,
-          insertStarted: true,
-          insertErrorJson: completeData.insertErrorJson
+          bucketName: registerData.bucketName ?? current.bucketName,
+          filePath: registerData.filePath ?? current.filePath,
+          selectedFile: registerData.fileName ?? current.selectedFile,
+          selectedFileType: registerData.fileType ?? current.selectedFileType,
+          selectedFileSize: registerData.fileSize ?? current.selectedFileSize,
+          registerStep: registerData.step,
+          registerResponseJson: stringifyDebugValue(registerData),
+          storagePath: registerData.storagePath ?? current.storagePath,
+          networkError: registerData.networkError,
+          registerStarted: true,
+          registerErrorJson: registerData.registerErrorJson
         }));
-        setError(completeData.message || "문서 목록 저장에 실패했습니다.");
+        setError(registerData.message || "문서 metadata 저장에 실패했습니다.");
         setIsUploading(false);
         return;
       }
 
       setUploadDebugInfo((current) => ({
         ...current,
-        bucketName: completeData.bucketName ?? current.bucketName,
-        filePath: completeData.filePath ?? current.filePath,
-        selectedFile: completeData.fileName ?? current.selectedFile,
-        selectedFileType: completeData.fileType ?? current.selectedFileType,
-        selectedFileSize: completeData.fileSize ?? current.selectedFileSize,
-        serverStep: "success",
-        serverDiagnosticsJson: stringifyDebugValue(completeData),
-        storagePath: completeData.storagePath,
-        insertStarted: true
+        bucketName: registerData.bucketName ?? current.bucketName,
+        filePath: registerData.filePath ?? current.filePath,
+        selectedFile: registerData.fileName ?? current.selectedFile,
+        selectedFileType: registerData.fileType ?? current.selectedFileType,
+        selectedFileSize: registerData.fileSize ?? current.selectedFileSize,
+        registerStep: "documents-register-complete",
+        registerResponseJson: stringifyDebugValue(registerData),
+        storagePath: registerData.storagePath ?? current.storagePath,
+        registerStarted: true
       }));
-      setMessage(`${file.name} 업로드가 완료되었습니다. 저장 경로: ${completeData.storagePath}`);
+      setMessage(`${file.name} 업로드가 완료되었습니다. 저장 경로: ${registerData.storagePath ?? storagePath}`);
       setIsUploading(false);
       await loadDocuments();
     } catch (apiException) {
       const networkError = getNetworkError(apiException);
       setUploadDebugInfo((current) => ({
         ...current,
-        serverStep: "api-network",
+        registerStep: "network-error",
         networkError,
-        serverDiagnosticsJson: stringifyDebugValue(apiException),
+        registerResponseJson: stringifyDebugValue(apiException),
         uploadErrorJson: stringifyDebugValue(apiException)
       }));
-      setError(networkError.message || "업로드 API 호출 중 네트워크 오류가 발생했습니다.");
+      setError(networkError.message || "업로드 중 네트워크 오류가 발생했습니다.");
       setIsUploading(false);
     }
   }
@@ -1139,25 +1060,25 @@ function UploadDiagnostics({ debugInfo }: { debugInfo: UploadDebugInfo }) {
           <dd className="mt-1 break-all text-slate-800">{debugInfo.storagePath ?? "아직 성공하지 않음"}</dd>
         </div>
         <div className="rounded-md bg-field p-3">
-          <dt className="font-semibold text-slate-600">documents insert 시작</dt>
-          <dd className="mt-1 text-slate-800">{debugInfo.insertStarted ? "예" : "아니오"}</dd>
+          <dt className="font-semibold text-slate-600">documents register 시작</dt>
+          <dd className="mt-1 text-slate-800">{debugInfo.registerStarted ? "예" : "아니오"}</dd>
         </div>
         <div className="rounded-md bg-field p-3">
-          <dt className="font-semibold text-slate-600">서버 처리 단계</dt>
-          <dd className="mt-1 break-all text-slate-800">{debugInfo.serverStep ?? "아직 응답 없음"}</dd>
+          <dt className="font-semibold text-slate-600">register 처리 단계</dt>
+          <dd className="mt-1 break-all text-slate-800">{debugInfo.registerStep ?? "아직 응답 없음"}</dd>
         </div>
       </dl>
       {debugInfo.uploadErrorJson && (
         <DebugBlock title="Storage upload error JSON.stringify 결과" value={debugInfo.uploadErrorJson} tone="red" />
       )}
-      {debugInfo.serverDiagnosticsJson && (
-        <DebugBlock title="서버 API 진단 응답" value={debugInfo.serverDiagnosticsJson} tone={debugInfo.serverStep?.includes("failed") ? "red" : "neutral"} />
+      {debugInfo.registerResponseJson && (
+        <DebugBlock title="documents register API 응답" value={debugInfo.registerResponseJson} tone={debugInfo.registerStep?.includes("failed") ? "red" : "neutral"} />
       )}
       {debugInfo.networkError && (
         <DebugBlock title="Fetch/network error detail" value={stringifyDebugValue(debugInfo.networkError)} tone="red" />
       )}
-      {debugInfo.insertErrorJson && (
-        <DebugBlock title="documents insert error JSON.stringify 결과" value={debugInfo.insertErrorJson} tone="red" />
+      {debugInfo.registerErrorJson && (
+        <DebugBlock title="documents register error JSON.stringify 결과" value={debugInfo.registerErrorJson} tone="red" />
       )}
     </div>
   );
