@@ -165,8 +165,17 @@ as $$
   limit match_count;
 $$;
 
+create table if not exists public.chat_logs (
+  id uuid primary key default gen_random_uuid(),
+  question text not null,
+  answer text not null,
+  sources jsonb not null default '[]'::jsonb,
+  created_at timestamptz not null default now()
+);
+
 alter table public.documents enable row level security;
 alter table public.document_chunks enable row level security;
+alter table public.chat_logs enable row level security;
 
 drop policy if exists "Allow document list read" on public.documents;
 create policy "Allow document list read"
@@ -190,6 +199,13 @@ drop policy if exists "Allow document update" on public.documents;
 drop policy if exists "Allow chunk read" on public.document_chunks;
 create policy "Allow chunk read"
 on public.document_chunks
+for select
+to anon
+using (true);
+
+drop policy if exists "Allow chat log read" on public.chat_logs;
+create policy "Allow chat log read"
+on public.chat_logs
 for select
 to anon
 using (true);
