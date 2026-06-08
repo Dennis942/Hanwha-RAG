@@ -36,23 +36,34 @@ function getErrorDetail(error: unknown) {
 
 function getSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabasePublicKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const supabaseServerKey = process.env.SUPABASE_SECRET_KEY ?? process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const supabaseApiKey = supabaseServerKey ?? supabasePublicKey;
 
-  if (!supabaseUrl || !supabaseAnonKey) {
+  if (!supabaseUrl || !supabaseApiKey) {
     return {
       client: null,
       diagnostics: {
         hasUrl: Boolean(supabaseUrl),
-        hasAnonKey: Boolean(supabaseAnonKey)
+        hasPublicKey: Boolean(supabasePublicKey),
+        hasServerKey: Boolean(supabaseServerKey),
+        keyMode: "missing"
       }
     };
   }
 
   return {
-    client: createClient(supabaseUrl, supabaseAnonKey),
+    client: createClient(supabaseUrl, supabaseApiKey, {
+      auth: {
+        persistSession: false,
+        autoRefreshToken: false
+      }
+    }),
     diagnostics: {
       hasUrl: true,
-      hasAnonKey: true
+      hasPublicKey: Boolean(supabasePublicKey),
+      hasServerKey: Boolean(supabaseServerKey),
+      keyMode: supabaseServerKey ? "server" : "public"
     }
   };
 }
