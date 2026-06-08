@@ -598,14 +598,14 @@ function AskPage(props: {
   }, [historyLog]);
 
   useEffect(() => {
-    const client = supabase;
-
-    if (!client) {
-      setFilterOptions({ categories: documentCategories, documentTypes, tags: [] });
-      return;
-    }
-
     async function loadFilterOptions() {
+      const client = supabase as any;
+
+      if (!client) {
+        setFilterOptions({ categories: documentCategories, documentTypes, tags: [] });
+        return;
+      }
+
       const { data } = await client
         .from("documents")
         .select("category,document_type,tags")
@@ -950,7 +950,7 @@ function DocumentsPage({ projects, onProjectsChanged }: { projects: SupabaseProj
   }, []);
 
   async function loadDocuments() {
-    const client = supabase;
+    const client = supabase as any;
 
     if (!client) {
       setIsLoading(false);
@@ -984,7 +984,7 @@ function DocumentsPage({ projects, onProjectsChanged }: { projects: SupabaseProj
       return;
     }
 
-    const client = supabase;
+    const client = supabase as any;
 
     if (!client) {
       setError("Supabase 환경변수가 설정되지 않았습니다.");
@@ -1269,7 +1269,7 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
   }, [selectedProject]);
 
   async function loadProjectCounts() {
-    const client = supabase;
+    const client = supabase as any;
 
     if (!client) {
       return;
@@ -1298,7 +1298,7 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
   }
 
   async function loadProjectRelatedData(projectId: string) {
-    const client = supabase;
+    const client = supabase as any;
 
     if (!client) {
       return;
@@ -1523,7 +1523,7 @@ function AdminPage({ projects }: { projects: SupabaseProject[] }) {
   const [message, setMessage] = useState("");
 
   async function loadDocuments() {
-    const client = supabase;
+    const client = supabase as any;
 
     if (!client) {
       setIsLoading(false);
