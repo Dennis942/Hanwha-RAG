@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { Badge, FieldLabel, Panel, SectionHeader } from "@/components/ui";
 import { currentUser, documents, projects, recentQuestions, tags } from "@/lib/mock-data";
-import { askKnowledgeBase, searchWorkHistory } from "@/lib/rag-service";
+import { searchWorkHistory } from "@/lib/rag-service";
 import { isSupabaseConfigured, supabase, supabaseDiagnostics, type SupabaseDocument } from "@/lib/supabase";
 import type { ChangeEvent } from "react";
 import type { LucideIcon } from "lucide-react";
@@ -86,6 +86,22 @@ type RegisterApiResponse = {
     message?: string;
     stack?: string;
   };
+};
+
+type ChatSource = {
+  documentId: string;
+  documentTitle: string;
+  filePath: string;
+  chunkIndex: number;
+  similarity: number;
+  content: string;
+};
+
+type ChatApiResponse = {
+  ok: boolean;
+  answer?: string;
+  sources?: ChatSource[];
+  message?: string;
 };
 
 function getStatusTone(status: string) {
@@ -157,7 +173,6 @@ export default function HomePage() {
   const [projectFilter, setProjectFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
-  const answer = useMemo(() => askKnowledgeBase(question), [question]);
   const searchResults = useMemo(
     () => searchWorkHistory(searchQuery, { projectId: projectFilter, tagId: tagFilter, documentType: typeFilter }),
     [projectFilter, searchQuery, tagFilter, typeFilter]
@@ -257,7 +272,6 @@ export default function HomePage() {
           )}
           {activePage === "ask" && (
             <AskPage
-              answer={answer}
               projectFilter={projectFilter}
               question={question}
               setProjectFilter={setProjectFilter}
@@ -442,7 +456,6 @@ function Dashboard({
 }
 
 function AskPage(props: {
-  answer: ReturnType<typeof askKnowledgeBase>;
   projectFilter: string;
   question: string;
   setProjectFilter: (value: string) => void;
@@ -450,7 +463,57 @@ function AskPage(props: {
   setTagFilter: (value: string) => void;
   tagFilter: string;
 }) {
-  const { answer, projectFilter, question, setProjectFilter, setQuestion, setTagFilter, tagFilter } = props;
+  const { projectFilter, question, setProjectFilter, setQuestion, setTagFilter, tagFilter } = props;
+  const [answer, setAnswer] = useState("");
+  const [sources, setSources] = useState<ChatSource[]>([]);
+  const [isAsking, setIsAsking] = useState(false);
+  const [askError, setAskError] = useState("");
+
+  async function askQuestion() {
+    const normalizedQuestion = question.trim();
+
+    if (!normalizedQuestion) {
+      setAskError("질문을 입력해주세요.");
+      return;
+    }
+
+    setIsAsking(true);
+    setAskError("");
+    setAnswer("");
+    setSources([]);
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ question: normalizedQuestion })
+      });
+      const responseText = await response.text();
+      let responseData: ChatApiResponse;
+
+      try {
+        responseData = JSON.parse(responseText) as ChatApiResponse;
+      } catch {
+        responseData = {
+          ok: false,
+          message: responseText || `질문 API가 ${response.status} 상태를 반환했습니다.`
+        };
+      }
+
+      if (!response.ok || !responseData.ok) {
+        throw new Error(responseData.message ?? "질문 처리에 실패했습니다.");
+      }
+
+      setAnswer(responseData.answer ?? "등록된 문서에서 확인되지 않습니다.");
+      setSources(responseData.sources ?? []);
+    } catch (error) {
+      setAskError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setIsAsking(false);
+    }
+  }
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
@@ -463,40 +526,44 @@ function AskPage(props: {
           />
           <textarea value={question} onChange={(event) => setQuestion(event.target.value)} className="min-h-36 w-full rounded-md border border-line bg-field p-4 text-base" />
           <Filters projectFilter={projectFilter} setProjectFilter={setProjectFilter} tagFilter={tagFilter} setTagFilter={setTagFilter} />
-          <button className="flex h-11 items-center gap-2 rounded-md bg-ocean px-4 font-semibold text-white">
+          <button
+            type="button"
+            onClick={() => void askQuestion()}
+            disabled={isAsking}
+            className="flex h-11 items-center gap-2 rounded-md bg-ocean px-4 font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
+          >
             <MessageSquareText size={18} aria-hidden />
-            질문하기
+            {isAsking ? "답변 생성 중" : "질문하기"}
           </button>
+          {askError && <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{askError}</p>}
           <div className="rounded-md border border-line bg-white p-5">
             <div className="mb-3 flex items-center justify-between">
               <h3 className="font-semibold text-ink">답변</h3>
-              <Badge tone={answer.confidence === "none" ? "red" : "green"}>{answer.confidence}</Badge>
+              <Badge tone={sources.length === 0 ? "red" : "green"}>{sources.length === 0 ? "no source" : `${sources.length} sources`}</Badge>
             </div>
-            {answer.answer ? <p className="leading-7 text-slate-700">{answer.answer}</p> : <p className="rounded-md bg-field p-4 font-semibold text-slate-600">자료에서 확인할 수 없습니다</p>}
+            {answer ? <p className="whitespace-pre-line leading-7 text-slate-700">{answer}</p> : <p className="rounded-md bg-field p-4 font-semibold text-slate-600">질문을 입력하고 실행하면 등록된 문서 기준으로 답변합니다.</p>}
           </div>
+          {sources.length > 0 && (
+            <div className="space-y-3">
+              <h3 className="text-sm font-semibold text-ink">답변 출처</h3>
+              {sources.map((source) => (
+                <SourceCard key={`${source.documentId}-${source.chunkIndex}`} source={source} />
+              ))}
+            </div>
+          )}
         </div>
       </Panel>
       <Panel>
         <SectionHeader title="출처 및 관련 문서" />
         <div className="space-y-4 p-5">
-          {answer.citations.length === 0 && <p className="text-sm text-slate-500">충분한 근거 문서가 없습니다.</p>}
-          {answer.citations.map((citation) => {
-            const document = documents.find((item) => item.id === citation.documentId);
-            return (
-              <div key={`${citation.documentId}-${citation.section}`} className="rounded-md border border-line bg-field p-4">
-                <div className="mb-2 flex items-center justify-between gap-2">
-                  <p className="text-sm font-semibold text-ink">{document?.title}</p>
-                  <Badge tone="blue">{Math.round(citation.score * 100)}%</Badge>
-                </div>
-                <p className="text-xs font-semibold text-slate-500">{citation.section}</p>
-                <p className="mt-2 text-sm leading-6 text-slate-700">{citation.snippet}</p>
-              </div>
-            );
-          })}
+          {sources.length === 0 && <p className="text-sm text-slate-500">아직 참조한 문서 chunk가 없습니다.</p>}
+          {sources.map((source) => (
+            <SourceCard key={`side-${source.documentId}-${source.chunkIndex}`} source={source} />
+          ))}
           <div>
             <h3 className="mb-2 text-sm font-semibold text-ink">후속 질문 추천</h3>
             <div className="space-y-2">
-              {answer.followUps.map((item) => (
+              {["이 문서들의 핵심 내용을 요약해줘", "근거가 되는 파일 경로를 알려줘", "업로드된 문서에서 확인 가능한 리스크를 찾아줘"].map((item) => (
                 <button key={item} onClick={() => setQuestion(item)} className="w-full rounded-md border border-line bg-white p-3 text-left text-sm text-slate-700">
                   {item}
                 </button>
@@ -505,6 +572,20 @@ function AskPage(props: {
           </div>
         </div>
       </Panel>
+    </div>
+  );
+}
+
+function SourceCard({ source }: { source: ChatSource }) {
+  return (
+    <div className="rounded-md border border-line bg-field p-4">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold text-ink">{source.documentTitle}</p>
+        <Badge tone="blue">{Math.round(source.similarity * 100)}%</Badge>
+      </div>
+      <p className="break-all text-xs font-semibold text-slate-500">{source.filePath}</p>
+      <p className="mt-1 text-xs font-semibold text-slate-500">chunk #{source.chunkIndex}</p>
+      <p className="mt-2 line-clamp-4 text-sm leading-6 text-slate-700">{source.content}</p>
     </div>
   );
 }
