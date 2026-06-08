@@ -29,6 +29,9 @@ import type { LucideIcon } from "lucide-react";
 
 const statusTone = {
   uploaded: "blue",
+  indexing: "amber",
+  indexed: "green",
+  failed: "red",
   Uploaded: "blue",
   Pending: "amber",
   Processing: "amber",
@@ -40,13 +43,22 @@ const statusTone = {
 
 const allowedDocumentExtensions = ["pdf", "txt", "docx"] as const;
 const documentsBucketName = "documents";
+const maxFileSizeBytes = 20 * 1024 * 1024;
+const contentTypes: Record<(typeof allowedDocumentExtensions)[number], string> = {
+  pdf: "application/pdf",
+  txt: "text/plain",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+};
 
 type UploadDebugInfo = {
   selectedFile?: string;
+  selectedFileType?: string;
+  selectedFileSize?: number;
   storageUploadStarted: boolean;
   bucketName: string;
   filePath?: string;
   serverStep?: string;
+  serverDiagnosticsJson?: string;
   storagePath?: string;
   uploadErrorJson?: string;
   networkError?: {
@@ -62,8 +74,13 @@ type UploadApiResponse = {
   ok: boolean;
   step?: string;
   message?: string;
+  fileName?: string;
+  fileType?: string;
+  fileSize?: number;
+  maxFileSize?: number;
   bucketName?: string;
   filePath?: string;
+  uploadToken?: string;
   storagePath?: string;
   uploadErrorJson?: string;
   insertErrorJson?: string;
@@ -80,13 +97,6 @@ function getStatusTone(status: string) {
 
 function getFileExtension(fileName: string) {
   return fileName.split(".").pop()?.toLowerCase() ?? "";
-}
-
-function makeStoragePath(file: File) {
-  const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-  const id = typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}`;
-
-  return `uploads/${id}-${safeName}`;
 }
 
 function formatDateTime(value: string) {
@@ -566,7 +576,30 @@ function DocumentsPage() {
 
   useEffect(() => {
     void loadDocuments();
+    void loadUploadDiagnostics();
   }, []);
+
+  async function loadUploadDiagnostics() {
+    try {
+      const response = await fetch("/api/documents/upload", {
+        method: "GET"
+      });
+      const responseText = await response.text();
+
+      setUploadDebugInfo((current) => ({
+        ...current,
+        serverStep: response.ok ? "bucket-check" : "bucket-check-failed",
+        serverDiagnosticsJson: responseText
+      }));
+    } catch (diagnosticsError) {
+      setUploadDebugInfo((current) => ({
+        ...current,
+        serverStep: "diagnostics-network",
+        networkError: getNetworkError(diagnosticsError),
+        serverDiagnosticsJson: stringifyDebugValue(diagnosticsError)
+      }));
+    }
+  }
 
   async function loadDocuments() {
     if (!supabase) {
@@ -580,7 +613,7 @@ function DocumentsPage() {
 
     const { data, error: loadError } = await supabase
       .from("documents")
-      .select("id,title,file_path,file_type,status,created_at")
+      .select("id,title,file_path,file_type,status,error_message,created_at")
       .order("created_at", { ascending: false });
 
     if (loadError) {
@@ -614,68 +647,187 @@ function DocumentsPage() {
       return;
     }
 
+    if (file.size > maxFileSizeBytes) {
+      setError("파일은 20MB 이하만 업로드할 수 있습니다.");
+      setMessage("");
+      setUploadDebugInfo((current) => ({
+        ...current,
+        selectedFile: file.name,
+        selectedFileType: fileType.toUpperCase(),
+        selectedFileSize: file.size,
+        serverStep: "validation"
+      }));
+      return;
+    }
+
     setIsUploading(true);
     setError("");
     setMessage("");
 
-    const filePath = makeStoragePath(file);
     setUploadDebugInfo({
       selectedFile: file.name,
+      selectedFileType: fileType.toUpperCase(),
+      selectedFileSize: file.size,
       storageUploadStarted: true,
       bucketName: documentsBucketName,
-      filePath,
+      filePath: "서버에서 UUID 기반 경로 생성",
       insertStarted: false
     });
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("filePath", filePath);
-
     try {
-      const response = await fetch("/api/documents/upload", {
+      const prepareResponse = await fetch("/api/documents/upload", {
         method: "POST",
-        body: formData
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          action: "prepare",
+          fileName: file.name,
+          fileSize: file.size
+        })
       });
-      const responseText = await response.text();
-      let responseData: UploadApiResponse;
+      const prepareResponseText = await prepareResponse.text();
+      let prepareData: UploadApiResponse;
 
       try {
-        responseData = JSON.parse(responseText) as UploadApiResponse;
+        prepareData = JSON.parse(prepareResponseText) as UploadApiResponse;
       } catch {
-        responseData = {
+        prepareData = {
           ok: false,
           step: "api-response",
-          message: responseText || `업로드 API가 ${response.status} 상태를 반환했습니다.`,
-          uploadErrorJson: responseText
+          message: prepareResponseText || `업로드 API가 ${prepareResponse.status} 상태를 반환했습니다.`,
+          uploadErrorJson: prepareResponseText
         };
       }
 
-      if (!response.ok || !responseData.ok) {
+      if (!prepareResponse.ok || !prepareData.ok || !prepareData.filePath || !prepareData.uploadToken) {
         setUploadDebugInfo((current) => ({
           ...current,
-          bucketName: responseData.bucketName ?? current.bucketName,
-          filePath: responseData.filePath ?? current.filePath,
-          serverStep: responseData.step,
-          storagePath: responseData.storagePath,
-          uploadErrorJson: responseData.uploadErrorJson,
-          networkError: responseData.networkError,
-          insertStarted: responseData.step === "documents-insert",
-          insertErrorJson: responseData.insertErrorJson
+          bucketName: prepareData.bucketName ?? current.bucketName,
+          filePath: prepareData.filePath ?? current.filePath,
+          selectedFile: prepareData.fileName ?? current.selectedFile,
+          selectedFileType: prepareData.fileType ?? current.selectedFileType,
+          selectedFileSize: prepareData.fileSize ?? current.selectedFileSize,
+          serverStep: prepareData.step,
+          serverDiagnosticsJson: stringifyDebugValue(prepareData),
+          storagePath: prepareData.storagePath,
+          uploadErrorJson: prepareData.uploadErrorJson,
+          networkError: prepareData.networkError,
+          insertStarted: prepareData.step === "documents-insert",
+          insertErrorJson: prepareData.insertErrorJson
         }));
-        setError(responseData.message || "업로드에 실패했습니다.");
+        setError(prepareData.message || "업로드 준비에 실패했습니다.");
         setIsUploading(false);
         return;
       }
 
       setUploadDebugInfo((current) => ({
         ...current,
-        bucketName: responseData.bucketName ?? current.bucketName,
-        filePath: responseData.filePath ?? current.filePath,
-        serverStep: "success",
-        storagePath: responseData.storagePath,
+        bucketName: prepareData.bucketName ?? current.bucketName,
+        filePath: prepareData.filePath,
+        selectedFile: prepareData.fileName ?? current.selectedFile,
+        selectedFileType: prepareData.fileType ?? current.selectedFileType,
+        selectedFileSize: prepareData.fileSize ?? current.selectedFileSize,
+        serverStep: "prepared",
+        serverDiagnosticsJson: stringifyDebugValue(prepareData)
+      }));
+
+      const { error: signedUploadError } = await supabase.storage
+        .from(documentsBucketName)
+        .uploadToSignedUrl(
+          prepareData.filePath,
+          prepareData.uploadToken,
+          file,
+          {
+            cacheControl: "3600",
+            contentType: contentTypes[fileType as (typeof allowedDocumentExtensions)[number]],
+            metadata: {
+              title: file.name,
+              originalFileName: file.name
+            }
+          }
+        );
+
+      if (signedUploadError) {
+        const uploadErrorJson = stringifyDebugValue(signedUploadError);
+        setUploadDebugInfo((current) => ({
+          ...current,
+          serverStep: "storage-upload",
+          storagePath: undefined,
+          uploadErrorJson
+        }));
+        setError(signedUploadError.message || uploadErrorJson);
+        setIsUploading(false);
+        return;
+      }
+
+      setUploadDebugInfo((current) => ({
+        ...current,
+        serverStep: "storage-upload-complete",
+        storagePath: prepareData.filePath,
         insertStarted: true
       }));
-      setMessage(`${file.name} 업로드가 완료되었습니다. 저장 경로: ${responseData.storagePath}`);
+
+      const completeResponse = await fetch("/api/documents/upload", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          action: "complete",
+          title: file.name,
+          fileName: file.name,
+          filePath: prepareData.filePath,
+          fileSize: file.size
+        })
+      });
+      const completeResponseText = await completeResponse.text();
+      let completeData: UploadApiResponse;
+
+      try {
+        completeData = JSON.parse(completeResponseText) as UploadApiResponse;
+      } catch {
+        completeData = {
+          ok: false,
+          step: "api-response",
+          message: completeResponseText || `업로드 완료 API가 ${completeResponse.status} 상태를 반환했습니다.`,
+          insertErrorJson: completeResponseText
+        };
+      }
+
+      if (!completeResponse.ok || !completeData.ok) {
+        setUploadDebugInfo((current) => ({
+          ...current,
+          bucketName: completeData.bucketName ?? current.bucketName,
+          filePath: completeData.filePath ?? current.filePath,
+          selectedFile: completeData.fileName ?? current.selectedFile,
+          selectedFileType: completeData.fileType ?? current.selectedFileType,
+          selectedFileSize: completeData.fileSize ?? current.selectedFileSize,
+          serverStep: completeData.step,
+          serverDiagnosticsJson: stringifyDebugValue(completeData),
+          storagePath: completeData.storagePath ?? current.storagePath,
+          networkError: completeData.networkError,
+          insertStarted: true,
+          insertErrorJson: completeData.insertErrorJson
+        }));
+        setError(completeData.message || "문서 목록 저장에 실패했습니다.");
+        setIsUploading(false);
+        return;
+      }
+
+      setUploadDebugInfo((current) => ({
+        ...current,
+        bucketName: completeData.bucketName ?? current.bucketName,
+        filePath: completeData.filePath ?? current.filePath,
+        selectedFile: completeData.fileName ?? current.selectedFile,
+        selectedFileType: completeData.fileType ?? current.selectedFileType,
+        selectedFileSize: completeData.fileSize ?? current.selectedFileSize,
+        serverStep: "success",
+        serverDiagnosticsJson: stringifyDebugValue(completeData),
+        storagePath: completeData.storagePath,
+        insertStarted: true
+      }));
+      setMessage(`${file.name} 업로드가 완료되었습니다. 저장 경로: ${completeData.storagePath}`);
       setIsUploading(false);
       await loadDocuments();
     } catch (apiException) {
@@ -684,6 +836,7 @@ function DocumentsPage() {
         ...current,
         serverStep: "api-network",
         networkError,
+        serverDiagnosticsJson: stringifyDebugValue(apiException),
         uploadErrorJson: stringifyDebugValue(apiException)
       }));
       setError(networkError.message || "업로드 API 호출 중 네트워크 오류가 발생했습니다.");
@@ -796,32 +949,72 @@ function ProjectPage() {
 function AdminPage() {
   const [documentRows, setDocumentRows] = useState<SupabaseDocument[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [indexingDocumentId, setIndexingDocumentId] = useState("");
   const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
 
-  useEffect(() => {
-    async function loadDocuments() {
-      if (!supabase) {
-        setIsLoading(false);
-        setError("Supabase 환경변수가 설정되지 않았습니다.");
-        return;
-      }
-
-      const { data, error: loadError } = await supabase
-        .from("documents")
-        .select("id,title,file_path,file_type,status,created_at")
-        .order("created_at", { ascending: false });
-
-      if (loadError) {
-        setError(loadError.message);
-      } else {
-        setDocumentRows(data ?? []);
-      }
-
+  async function loadDocuments() {
+    if (!supabase) {
       setIsLoading(false);
+      setError("Supabase 환경변수가 설정되지 않았습니다.");
+      return;
     }
 
+    setIsLoading(true);
+
+    const { data, error: loadError } = await supabase
+      .from("documents")
+      .select("id,title,file_path,file_type,status,error_message,created_at")
+      .order("created_at", { ascending: false });
+
+    if (loadError) {
+      setError(loadError.message);
+    } else {
+      setDocumentRows(data ?? []);
+      setError("");
+    }
+
+    setIsLoading(false);
+  }
+
+  useEffect(() => {
     void loadDocuments();
   }, []);
+
+  async function runIndexing(documentId: string) {
+    setIndexingDocumentId(documentId);
+    setError("");
+    setMessage("");
+
+    try {
+      const response = await fetch("/api/documents/index", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ documentId })
+      });
+      const responseData = await response.json();
+
+      if (!response.ok || !responseData.ok) {
+        throw new Error(responseData.message ?? "인덱싱 실행에 실패했습니다.");
+      }
+
+      const result = responseData.results?.[0];
+
+      if (result?.status === "failed") {
+        setError(result.error ?? "인덱싱에 실패했습니다.");
+      } else {
+        setMessage(`${result?.title ?? "문서"} 인덱싱이 완료되었습니다.`);
+      }
+
+      await loadDocuments();
+    } catch (indexingError) {
+      setError(indexingError instanceof Error ? indexingError.message : String(indexingError));
+    } finally {
+      setIndexingDocumentId("");
+    }
+  }
 
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
@@ -830,17 +1023,23 @@ function AdminPage() {
         <div className="p-5 pb-0">
           <PageIntro
             title="문서 인덱싱 운영 콘솔"
-            description="이번 1단계에서는 업로드된 문서가 documents 테이블에 uploaded 상태로 저장되었는지 확인합니다."
+            description="uploaded 상태 문서를 텍스트로 추출하고 chunk, embedding을 생성해 document_chunks 테이블에 저장합니다."
           />
+          {message && <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</p>}
           {error && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
         </div>
-        <SupabaseDocumentTable documents={documentRows} isLoading={isLoading} />
+        <SupabaseDocumentTable
+          documents={documentRows}
+          isLoading={isLoading}
+          indexingDocumentId={indexingDocumentId}
+          onIndexDocument={runIndexing}
+        />
       </Panel>
       <Panel>
         <SectionHeader title="관리자 알림" />
         <div className="space-y-3 p-5">
-          <p className="rounded-md border border-line bg-field p-3 text-sm text-slate-700">OpenAI 임베딩과 답변 생성은 아직 연결하지 않았습니다.</p>
-          <p className="rounded-md border border-line bg-field p-3 text-sm text-slate-700">다음 단계에서 추출, 청킹, 임베딩 작업 상태를 별도 테이블로 확장할 수 있습니다.</p>
+          <p className="rounded-md border border-line bg-field p-3 text-sm text-slate-700">OPENAI_API_KEY가 Vercel 환경변수에 있어야 임베딩을 생성할 수 있습니다.</p>
+          <p className="rounded-md border border-line bg-field p-3 text-sm text-slate-700">실패한 문서는 error_message에 원인이 저장됩니다.</p>
         </div>
       </Panel>
     </div>
@@ -928,6 +1127,14 @@ function UploadDiagnostics({ debugInfo }: { debugInfo: UploadDebugInfo }) {
           <dd className="mt-1 break-all text-slate-800">{debugInfo.selectedFile ?? "없음"}</dd>
         </div>
         <div className="rounded-md bg-field p-3">
+          <dt className="font-semibold text-slate-600">파일 유형</dt>
+          <dd className="mt-1 break-all text-slate-800">{debugInfo.selectedFileType ?? "없음"}</dd>
+        </div>
+        <div className="rounded-md bg-field p-3">
+          <dt className="font-semibold text-slate-600">파일 크기</dt>
+          <dd className="mt-1 break-all text-slate-800">{debugInfo.selectedFileSize == null ? "없음" : `${(debugInfo.selectedFileSize / 1024 / 1024).toFixed(2)} MB`}</dd>
+        </div>
+        <div className="rounded-md bg-field p-3">
           <dt className="font-semibold text-slate-600">Storage 저장 path</dt>
           <dd className="mt-1 break-all text-slate-800">{debugInfo.storagePath ?? "아직 성공하지 않음"}</dd>
         </div>
@@ -942,6 +1149,9 @@ function UploadDiagnostics({ debugInfo }: { debugInfo: UploadDebugInfo }) {
       </dl>
       {debugInfo.uploadErrorJson && (
         <DebugBlock title="Storage upload error JSON.stringify 결과" value={debugInfo.uploadErrorJson} tone="red" />
+      )}
+      {debugInfo.serverDiagnosticsJson && (
+        <DebugBlock title="서버 API 진단 응답" value={debugInfo.serverDiagnosticsJson} tone={debugInfo.serverStep?.includes("failed") ? "red" : "neutral"} />
       )}
       {debugInfo.networkError && (
         <DebugBlock title="Fetch/network error detail" value={stringifyDebugValue(debugInfo.networkError)} tone="red" />
@@ -966,7 +1176,17 @@ function DebugBlock({ title, value, tone = "neutral" }: { title: string; value: 
   );
 }
 
-function SupabaseDocumentTable({ documents, isLoading }: { documents: SupabaseDocument[]; isLoading: boolean }) {
+function SupabaseDocumentTable({
+  documents,
+  indexingDocumentId = "",
+  isLoading,
+  onIndexDocument
+}: {
+  documents: SupabaseDocument[];
+  indexingDocumentId?: string;
+  isLoading: boolean;
+  onIndexDocument?: (documentId: string) => void;
+}) {
   if (isLoading) {
     return <p className="p-5 text-sm text-slate-500">문서 목록을 불러오는 중입니다.</p>;
   }
@@ -985,6 +1205,7 @@ function SupabaseDocumentTable({ documents, isLoading }: { documents: SupabaseDo
             <th className="px-5 py-3">Storage 경로</th>
             <th className="px-5 py-3">업로드 일시</th>
             <th className="px-5 py-3">상태</th>
+            {onIndexDocument && <th className="px-5 py-3">작업</th>}
           </tr>
         </thead>
         <tbody>
@@ -994,7 +1215,24 @@ function SupabaseDocumentTable({ documents, isLoading }: { documents: SupabaseDo
               <td className="px-5 py-4 uppercase">{document.file_type}</td>
               <td className="max-w-[320px] truncate px-5 py-4 text-slate-600">{document.file_path}</td>
               <td className="px-5 py-4">{formatDateTime(document.created_at)}</td>
-              <td className="px-5 py-4"><Badge tone={getStatusTone(document.status)}>{document.status}</Badge></td>
+              <td className="px-5 py-4">
+                <div className="space-y-1">
+                  <Badge tone={getStatusTone(document.status)}>{document.status}</Badge>
+                  {document.error_message && <p className="max-w-[260px] text-xs leading-5 text-rose-600">{document.error_message}</p>}
+                </div>
+              </td>
+              {onIndexDocument && (
+                <td className="px-5 py-4">
+                  <button
+                    type="button"
+                    disabled={document.status !== "uploaded" || Boolean(indexingDocumentId)}
+                    onClick={() => onIndexDocument(document.id)}
+                    className="rounded-md border border-line px-3 py-2 text-xs font-semibold text-slate-700 disabled:cursor-not-allowed disabled:bg-field disabled:text-slate-400"
+                  >
+                    {indexingDocumentId === document.id ? "인덱싱 중" : "인덱싱 실행"}
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
