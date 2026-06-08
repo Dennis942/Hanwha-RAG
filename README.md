@@ -52,8 +52,11 @@ Vercel Project Settings > Environment Variables에 아래 값을 등록합니다
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=your-supabase-project-url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-supabase-anon-key
+SUPABASE_SECRET_KEY=your-supabase-secret-key
 ```
 
-환경변수 등록 후 Vercel에서 다시 배포하면 문서 업로드 화면에서 PDF, TXT, DOCX 파일을 Supabase Storage의 `documents` bucket에 저장하고, 문서 목록과 인덱싱 상태 화면에서 `documents` 테이블 목록을 조회합니다.
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`에는 legacy anon JWT 또는 새 publishable key(`sb_publishable_...`)를 넣을 수 있습니다. 문서 업로드 API 라우트는 서버에서 실행되므로 Storage 저장과 `documents` insert에는 `SUPABASE_SECRET_KEY`를 우선 사용합니다. 기존 legacy 키를 쓰는 프로젝트라면 `SUPABASE_SERVICE_ROLE_KEY`를 대신 등록해도 됩니다.
+
+환경변수 등록 후 Vercel에서 다시 배포하면 문서 업로드 화면에서 PDF, TXT, DOCX 파일을 Next.js API 라우트로 전송하고, 서버가 Supabase Storage의 `documents` bucket에 저장한 뒤 문서 목록과 인덱싱 상태 화면에서 `documents` 테이블 목록을 조회합니다.
 
 현재 구현은 실제 RAG 파이프라인 대신 mock service layer를 사용합니다. OpenAI 임베딩과 RAG 답변 기능은 아직 연결하지 않았으며, 이후 `lib/rag-service.ts`를 API 호출, PostgreSQL + pgvector, 외부 Vector DB, LLM API 연결부로 교체하면 됩니다.
