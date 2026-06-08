@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { Badge, FieldLabel, Panel, SectionHeader } from "@/components/ui";
 import { currentUser, documents, projects, recentQuestions, tags } from "@/lib/mock-data";
-import { isSupabaseConfigured, supabase, supabaseDiagnostics, type ChatLog, type SupabaseDocument, type SupabaseProject } from "@/lib/supabase";
+import { isSupabaseConfigured, supabase, supabaseDiagnostics, type SupabaseDocument, type SupabaseProject } from "@/lib/supabase";
 import type { ChangeEvent, ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 
@@ -115,6 +115,17 @@ type ChatApiResponse = {
     indexedDocumentCount?: number;
   };
   message?: string;
+};
+
+type ChatLog = {
+  id: string;
+  question: string;
+  answer: string;
+  sources: unknown[];
+  filters?: Record<string, unknown> | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  created_at: string;
 };
 
 type SearchResult = {
@@ -587,12 +598,15 @@ function AskPage(props: {
   }, [historyLog]);
 
   useEffect(() => {
-    if (!supabase) {
+    const client = supabase;
+
+    if (!client) {
+      setFilterOptions({ categories: documentCategories, documentTypes, tags: [] });
       return;
     }
 
     async function loadFilterOptions() {
-      const { data } = await supabase
+      const { data } = await client
         .from("documents")
         .select("category,document_type,tags")
         .not("status", "eq", "failed");
@@ -936,7 +950,9 @@ function DocumentsPage({ projects, onProjectsChanged }: { projects: SupabaseProj
   }, []);
 
   async function loadDocuments() {
-    if (!supabase) {
+    const client = supabase;
+
+    if (!client) {
       setIsLoading(false);
       setError("Supabase 환경변수가 설정되지 않았습니다.");
       return;
@@ -945,7 +961,7 @@ function DocumentsPage({ projects, onProjectsChanged }: { projects: SupabaseProj
     setIsLoading(true);
     setError("");
 
-    const { data, error: loadError } = await supabase
+    const { data, error: loadError } = await client
       .from("documents")
       .select("id,title,file_path,file_type,file_size,project_id,project_name,category,document_type,tags,description,status,error_message,created_at,updated_at")
       .order("created_at", { ascending: false });
@@ -968,7 +984,9 @@ function DocumentsPage({ projects, onProjectsChanged }: { projects: SupabaseProj
       return;
     }
 
-    if (!supabase) {
+    const client = supabase;
+
+    if (!client) {
       setError("Supabase 환경변수가 설정되지 않았습니다.");
       return;
     }
@@ -1012,7 +1030,7 @@ function DocumentsPage({ projects, onProjectsChanged }: { projects: SupabaseProj
     });
 
     try {
-      const { data: uploadData, error: storageError } = await supabase.storage
+      const { data: uploadData, error: storageError } = await client.storage
         .from(documentsBucketName)
         .upload(filePath, file, {
           cacheControl: "3600",
@@ -1251,14 +1269,16 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
   }, [selectedProject]);
 
   async function loadProjectCounts() {
-    if (!supabase) {
+    const client = supabase;
+
+    if (!client) {
       return;
     }
 
-    const { data: docs } = await supabase
+    const { data: docs } = await client
       .from("documents")
       .select("id,project_id,status,title,file_path,file_type,created_at");
-    const { data: logs } = await supabase
+    const { data: logs } = await client
       .from("chat_logs")
       .select("*");
 
@@ -1278,16 +1298,18 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
   }
 
   async function loadProjectRelatedData(projectId: string) {
-    if (!supabase) {
+    const client = supabase;
+
+    if (!client) {
       return;
     }
 
-    const { data: docs } = await supabase
+    const { data: docs } = await client
       .from("documents")
       .select("id,title,file_path,file_type,file_size,project_id,project_name,category,document_type,tags,description,status,error_message,created_at,updated_at")
       .eq("project_id", projectId)
       .order("created_at", { ascending: false });
-    const { data: logs } = await supabase
+    const { data: logs } = await client
       .from("chat_logs")
       .select("*")
       .eq("project_id", projectId)
@@ -1501,7 +1523,9 @@ function AdminPage({ projects }: { projects: SupabaseProject[] }) {
   const [message, setMessage] = useState("");
 
   async function loadDocuments() {
-    if (!supabase) {
+    const client = supabase;
+
+    if (!client) {
       setIsLoading(false);
       setError("Supabase 환경변수가 설정되지 않았습니다.");
       return;
@@ -1509,7 +1533,7 @@ function AdminPage({ projects }: { projects: SupabaseProject[] }) {
 
     setIsLoading(true);
 
-    const { data, error: loadError } = await supabase
+    const { data, error: loadError } = await client
       .from("documents")
       .select("id,title,file_path,file_type,file_size,project_id,project_name,category,document_type,tags,description,status,error_message,created_at,updated_at")
       .order("created_at", { ascending: false });
