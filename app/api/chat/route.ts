@@ -14,8 +14,14 @@ type MatchChunk = {
   content: string;
   chunk_index: number;
   metadata: {
+    document_id?: string;
     title?: string;
     file_path?: string;
+    project_id?: string;
+    project_name?: string;
+    category?: string;
+    document_type?: string;
+    tags?: string[];
     file_type?: string;
   } | null;
   similarity: number;
@@ -25,9 +31,22 @@ type Source = {
   documentId: string;
   documentTitle: string;
   filePath: string;
+  projectId: string | null;
+  projectName: string | null;
+  category: string | null;
+  documentType: string | null;
+  tags: string[];
   chunkIndex: number;
   similarity: number;
   content: string;
+};
+
+type ChatFilters = {
+  project_id?: string | null;
+  project_name?: string | null;
+  category?: string | null;
+  document_type?: string | null;
+  tag?: string | null;
 };
 
 function stringifyDebugValue(value: unknown) {
@@ -124,6 +143,11 @@ function buildSources(chunks: MatchChunk[]): Source[] {
     documentId: chunk.document_id,
     documentTitle: chunk.metadata?.title ?? "제목 없는 문서",
     filePath: chunk.metadata?.file_path ?? "",
+    projectId: chunk.metadata?.project_id ?? null,
+    projectName: chunk.metadata?.project_name ?? null,
+    category: chunk.metadata?.category ?? null,
+    documentType: chunk.metadata?.document_type ?? null,
+    tags: Array.isArray(chunk.metadata?.tags) ? chunk.metadata.tags : [],
     chunkIndex: chunk.chunk_index,
     similarity: chunk.similarity,
     content: chunk.content
@@ -137,6 +161,10 @@ function buildContext(sources: Source[]) {
         `[Source ${index + 1}]`,
         `문서명: ${source.documentTitle}`,
         `파일 경로: ${source.filePath}`,
+        `프로젝트: ${source.projectName ?? "미분류"}`,
+        `카테고리: ${source.category ?? "미분류"}`,
+        `문서 유형: ${source.documentType ?? "미분류"}`,
+        `태그: ${source.tags.join(", ") || "없음"}`,
         `chunk 번호: ${source.chunkIndex}`,
         `내용: ${source.content}`
       ].join("\n");
@@ -186,17 +214,56 @@ async function createAnswer(question: string, sources: Source[]) {
   return responseBody.choices?.[0]?.message?.content?.trim() || fallbackAnswer;
 }
 
-async function saveChatLog(supabase: any, input: { question: string; answer: string; sources: Source[] }) {
+function normalizeFilters(value: any): ChatFilters {
+  return {
+    project_id: value?.project_id || null,
+    project_name: value?.project_name || null,
+    category: value?.category || null,
+    document_type: value?.document_type || null,
+    tag: value?.tag || null
+  };
+}
+
+async function saveChatLog(supabase: any, input: { question: string; answer: string; sources: Source[]; filters: ChatFilters }) {
   const { error } = await supabase.from("chat_logs").insert({
     question: input.question,
     answer: input.answer,
     sources: input.sources,
+    filters: input.filters,
+    project_id: input.filters.project_id,
+    project_name: input.filters.project_name,
     created_at: new Date().toISOString()
   });
 
   if (error) {
     throw new Error(error.message);
   }
+}
+
+export async function GET() {
+  const supabase = getSupabaseClient();
+
+  if (!supabase) {
+    return NextResponse.json(
+      {
+        ok: false,
+        message: "Supabase 서버 환경변수가 설정되지 않았습니다."
+      },
+      { status: 500 }
+    );
+  }
+
+  const { data, error } = await (supabase as any)
+    .from("chat_logs")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(10);
+
+  if (error) {
+    return NextResponse.json({ ok: false, message: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ ok: true, logs: data ?? [] });
 }
 
 export async function POST(request: Request) {
@@ -226,10 +293,16 @@ export async function POST(request: Request) {
       );
     }
 
+    const filters = normalizeFilters(body?.filters);
     const embedding = await createQuestionEmbedding(question);
     const { data: chunks, error: matchError } = await (supabase as any).rpc("match_document_chunks", {
       query_embedding: toVector(embedding),
-      match_count: 5
+      match_count: 5,
+      filter_project_id: filters.project_id,
+      filter_project_name: filters.project_name,
+      filter_category: filters.category,
+      filter_document_type: filters.document_type,
+      filter_tag: filters.tag
     });
 
     if (matchError) {
@@ -238,17 +311,27 @@ export async function POST(request: Request) {
 
     const sources = buildSources((chunks ?? []) as MatchChunk[]);
     const answer = await createAnswer(question, sources);
+    const { count: indexedDocumentCount } = await (supabase as any)
+      .from("documents")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "indexed");
 
     await saveChatLog(supabase, {
       question,
       answer,
-      sources
+      sources,
+      filters
     });
 
     return NextResponse.json({
       ok: true,
       answer,
-      sources
+      sources,
+      diagnostics: {
+        filters,
+        searchedChunkCount: sources.length,
+        indexedDocumentCount: indexedDocumentCount ?? 0
+      }
     });
   } catch (error) {
     return NextResponse.json(
