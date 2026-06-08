@@ -17,6 +17,11 @@ type DocumentRow = {
   file_path: string;
   file_type: string;
   status: string;
+  project_id?: string | null;
+  project_name?: string | null;
+  category?: string | null;
+  document_type?: string | null;
+  tags?: string[] | null;
 };
 
 type DocumentStatus = "uploaded" | "indexing" | "indexed" | "failed";
@@ -30,8 +35,15 @@ type DocumentChunkInsertPayload = {
   chunk_index: number;
   embedding: string;
   metadata: {
+    document_id: string;
     title: string;
     file_path: string;
+    project_id: string | null;
+    project_name: string | null;
+    category: string | null;
+    document_type: string | null;
+    tags: string[];
+    chunk_index: number;
     file_type: string;
     embedding_model: string;
   };
@@ -230,8 +242,15 @@ async function indexDocument(supabase: any, document: DocumentRow) {
       chunk_index: index,
       embedding: toVector(embeddings[index]),
       metadata: {
+        document_id: document.id,
         title: document.title,
         file_path: document.file_path,
+        project_id: document.project_id ?? null,
+        project_name: document.project_name ?? null,
+        category: document.category ?? null,
+        document_type: document.document_type ?? null,
+        tags: document.tags ?? [],
+        chunk_index: index,
         file_type: normalizeFileType(document.file_type),
         embedding_model: embeddingModel
       }
@@ -293,7 +312,7 @@ export async function POST(request: Request) {
     const documentId = typeof body?.documentId === "string" ? body.documentId : null;
     let query = (supabase as any)
       .from("documents")
-      .select("id,title,file_path,file_type,status")
+      .select("id,title,file_path,file_type,status,project_id,project_name,category,document_type,tags")
       .eq("status", "uploaded")
       .order("created_at", { ascending: true });
 
