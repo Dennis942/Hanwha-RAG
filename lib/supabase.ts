@@ -21,7 +21,44 @@ export type SupabaseDocument = {
   file_path: string;
   file_type: string;
   file_size?: number | null;
+  project_id?: string | null;
+  project_name?: string | null;
+  category?: string | null;
+  document_type?: string | null;
+  tags?: string[] | null;
+  description?: string | null;
   status: string;
   error_message?: string | null;
+  created_at: string;
+  updated_at?: string | null;
+};
+
+export type SupabaseProject = {
+  id: string;
+  name: string;
+  description?: string | null;
+  status?: string | null;
+  category?: string | null;
+  tags?: string[] | null;
+  objective?: string | null;
+  owner?: string | null;
+  start_date?: string | null;
+  end_date?: string | null;
+  memo?: string | null;
+  decisions?: Array<{ date?: string; text?: string }> | null;
+  timeline?: Array<{ date?: string; text?: string }> | null;
+  archived?: boolean | null;
+  created_at?: string | null;
+  updated_at?: string | null;
+};
+
+export type ChatLog = {
+  id: string;
+  question: string;
+  answer: string;
+  sources: unknown[];
+  filters?: Record<string, unknown> | null;
+  project_id?: string | null;
+  project_name?: string | null;
   created_at: string;
 };
