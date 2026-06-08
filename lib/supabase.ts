@@ -20,6 +20,7 @@ export type SupabaseDocument = {
   title: string;
   file_path: string;
   file_type: string;
+  file_size?: number | null;
   status: string;
   error_message?: string | null;
   created_at: string;
