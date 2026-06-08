@@ -14,8 +14,9 @@ Next.js, TypeScript, Tailwind CSS 기반의 사내 업무 히스토리 조회 MV
 
 ## 구조
 
-- `app/page.tsx`: 전체 MVP 화면과 클라이언트 상태
+- `app/page.tsx`: App Router page 엔트리
 - `app/globals.css`: Tailwind 및 전역 스타일
+- `components/home-page.tsx`: 전체 MVP 화면과 클라이언트 상태
 - `components/ui.tsx`: 공통 패널, 배지, 섹션 헤더
 - `lib/supabase.ts`: Supabase client 설정
 - `lib/types.ts`: 향후 백엔드와 맞출 데이터 모델
