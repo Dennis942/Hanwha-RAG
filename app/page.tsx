@@ -23,7 +23,7 @@ import {
 import { Badge, FieldLabel, Panel, SectionHeader } from "@/components/ui";
 import { currentUser, documents, projects, recentQuestions, tags } from "@/lib/mock-data";
 import { askKnowledgeBase, searchWorkHistory } from "@/lib/rag-service";
-import { isSupabaseConfigured, supabase, type SupabaseDocument } from "@/lib/supabase";
+import { isSupabaseConfigured, supabase, supabaseDiagnostics, type SupabaseDocument } from "@/lib/supabase";
 import type { ChangeEvent } from "react";
 import type { LucideIcon } from "lucide-react";
 
@@ -39,6 +39,23 @@ const statusTone = {
 } as const;
 
 const allowedDocumentExtensions = ["pdf", "txt", "docx"] as const;
+const documentsBucketName = "documents";
+
+type UploadDebugInfo = {
+  selectedFile?: string;
+  storageUploadStarted: boolean;
+  bucketName: string;
+  filePath?: string;
+  storagePath?: string;
+  uploadErrorJson?: string;
+  networkError?: {
+    name?: string;
+    message?: string;
+    stack?: string;
+  };
+  insertStarted: boolean;
+  insertErrorJson?: string;
+};
 
 function getStatusTone(status: string) {
   return statusTone[status as keyof typeof statusTone] ?? "neutral";
@@ -60,6 +77,30 @@ function formatDateTime(value: string) {
     dateStyle: "medium",
     timeStyle: "short"
   }).format(new Date(value));
+}
+
+function stringifyDebugValue(value: unknown) {
+  try {
+    return JSON.stringify(value, Object.getOwnPropertyNames(value), 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function getNetworkError(error: unknown) {
+  if (error instanceof Error) {
+    return {
+      name: error.name,
+      message: error.message,
+      stack: error.stack
+    };
+  }
+
+  return {
+    name: typeof error,
+    message: stringifyDebugValue(error),
+    stack: undefined
+  };
 }
 
 const nav = [
@@ -500,6 +541,11 @@ function DocumentsPage() {
   const [isUploading, setIsUploading] = useState(false);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [uploadDebugInfo, setUploadDebugInfo] = useState<UploadDebugInfo>({
+    storageUploadStarted: false,
+    bucketName: documentsBucketName,
+    insertStarted: false
+  });
 
   useEffect(() => {
     void loadDocuments();
@@ -556,34 +602,84 @@ function DocumentsPage() {
     setMessage("");
 
     const filePath = makeStoragePath(file);
-    const { error: uploadError } = await supabase.storage.from("documents").upload(filePath, file, {
-      cacheControl: "3600",
-      upsert: false
+    setUploadDebugInfo({
+      selectedFile: file.name,
+      storageUploadStarted: true,
+      bucketName: documentsBucketName,
+      filePath,
+      insertStarted: false
     });
 
-    if (uploadError) {
-      setError(uploadError.message);
+    let storagePath = "";
+
+    try {
+      const { data: uploadData, error: uploadError } = await supabase.storage.from(documentsBucketName).upload(filePath, file, {
+        cacheControl: "3600",
+        upsert: false
+      });
+
+      if (uploadError) {
+        const uploadErrorJson = stringifyDebugValue(uploadError);
+        setUploadDebugInfo((current) => ({
+          ...current,
+          uploadErrorJson
+        }));
+        setError(uploadError.message || uploadErrorJson);
+        setIsUploading(false);
+        return;
+      }
+
+      storagePath = uploadData.path;
+      setUploadDebugInfo((current) => ({
+        ...current,
+        storagePath,
+        insertStarted: true
+      }));
+    } catch (uploadException) {
+      const networkError = getNetworkError(uploadException);
+      setUploadDebugInfo((current) => ({
+        ...current,
+        networkError,
+        uploadErrorJson: stringifyDebugValue(uploadException)
+      }));
+      setError(networkError.message || "Storage upload 중 네트워크 오류가 발생했습니다.");
       setIsUploading(false);
       return;
     }
 
-    const { error: insertError } = await supabase.from("documents").insert({
-      title: file.name,
-      file_path: filePath,
-      file_type: fileType,
-      status: "uploaded",
-      created_at: new Date().toISOString()
-    });
+    try {
+      const { error: insertError } = await supabase.from("documents").insert({
+        title: file.name,
+        file_path: storagePath,
+        file_type: fileType,
+        status: "uploaded",
+        created_at: new Date().toISOString()
+      });
 
-    if (insertError) {
-      setError(insertError.message);
+      if (insertError) {
+        const insertErrorJson = stringifyDebugValue(insertError);
+        setUploadDebugInfo((current) => ({
+          ...current,
+          insertErrorJson
+        }));
+        setError(insertError.message || insertErrorJson);
+        setIsUploading(false);
+        return;
+      }
+
+      setMessage(`${file.name} 업로드가 완료되었습니다. 저장 경로: ${storagePath}`);
       setIsUploading(false);
-      return;
+      await loadDocuments();
+    } catch (insertException) {
+      const networkError = getNetworkError(insertException);
+      setUploadDebugInfo((current) => ({
+        ...current,
+        networkError,
+        insertErrorJson: stringifyDebugValue(insertException)
+      }));
+      setError(networkError.message || "documents insert 중 네트워크 오류가 발생했습니다.");
+      setIsUploading(false);
     }
-
-    setMessage(`${file.name} 업로드가 완료되었습니다.`);
-    setIsUploading(false);
-    await loadDocuments();
   }
 
   return (
@@ -612,6 +708,7 @@ function DocumentsPage() {
           </div>
           {message && <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</p>}
           {error && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
+          <UploadDiagnostics debugInfo={uploadDebugInfo} />
         </div>
       </Panel>
       <Panel>
@@ -787,6 +884,71 @@ function Filters(props: { projectFilter: string; setProjectFilter: (value: strin
         <option value="">전체 태그</option>
         {tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
       </select>
+    </div>
+  );
+}
+
+function UploadDiagnostics({ debugInfo }: { debugInfo: UploadDebugInfo }) {
+  return (
+    <div className="mt-4 rounded-md border border-line bg-white p-4">
+      <div className="mb-3 flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-ink">업로드 진단 정보</h3>
+        <Badge tone={debugInfo.storageUploadStarted ? "blue" : "neutral"}>
+          {debugInfo.storageUploadStarted ? "Storage upload 시작됨" : "대기 중"}
+        </Badge>
+      </div>
+      <dl className="grid gap-3 text-sm md:grid-cols-2">
+        <div className="rounded-md bg-field p-3">
+          <dt className="font-semibold text-slate-600">NEXT_PUBLIC_SUPABASE_URL</dt>
+          <dd className="mt-1 break-all text-slate-800">{supabaseDiagnostics.hasUrl ? supabaseDiagnostics.url : "없음"}</dd>
+        </div>
+        <div className="rounded-md bg-field p-3">
+          <dt className="font-semibold text-slate-600">NEXT_PUBLIC_SUPABASE_ANON_KEY</dt>
+          <dd className="mt-1 break-all text-slate-800">{supabaseDiagnostics.hasAnonKey ? supabaseDiagnostics.anonKeyPreview : "없음"}</dd>
+        </div>
+        <div className="rounded-md bg-field p-3">
+          <dt className="font-semibold text-slate-600">Bucket</dt>
+          <dd className="mt-1 break-all text-slate-800">{debugInfo.bucketName}</dd>
+        </div>
+        <div className="rounded-md bg-field p-3">
+          <dt className="font-semibold text-slate-600">File path</dt>
+          <dd className="mt-1 break-all text-slate-800">{debugInfo.filePath ?? "파일 선택 전"}</dd>
+        </div>
+        <div className="rounded-md bg-field p-3">
+          <dt className="font-semibold text-slate-600">선택 파일</dt>
+          <dd className="mt-1 break-all text-slate-800">{debugInfo.selectedFile ?? "없음"}</dd>
+        </div>
+        <div className="rounded-md bg-field p-3">
+          <dt className="font-semibold text-slate-600">Storage 저장 path</dt>
+          <dd className="mt-1 break-all text-slate-800">{debugInfo.storagePath ?? "아직 성공하지 않음"}</dd>
+        </div>
+        <div className="rounded-md bg-field p-3">
+          <dt className="font-semibold text-slate-600">documents insert 시작</dt>
+          <dd className="mt-1 text-slate-800">{debugInfo.insertStarted ? "예" : "아니오"}</dd>
+        </div>
+      </dl>
+      {debugInfo.uploadErrorJson && (
+        <DebugBlock title="Storage upload error JSON.stringify 결과" value={debugInfo.uploadErrorJson} tone="red" />
+      )}
+      {debugInfo.networkError && (
+        <DebugBlock title="Fetch/network error detail" value={stringifyDebugValue(debugInfo.networkError)} tone="red" />
+      )}
+      {debugInfo.insertErrorJson && (
+        <DebugBlock title="documents insert error JSON.stringify 결과" value={debugInfo.insertErrorJson} tone="red" />
+      )}
+    </div>
+  );
+}
+
+function DebugBlock({ title, value, tone = "neutral" }: { title: string; value: string; tone?: "red" | "neutral" }) {
+  const className = tone === "red"
+    ? "mt-3 max-h-80 overflow-auto rounded-md border border-rose-200 bg-rose-50 p-3 text-xs text-rose-900"
+    : "mt-3 max-h-80 overflow-auto rounded-md border border-line bg-field p-3 text-xs text-slate-800";
+
+  return (
+    <div>
+      <p className="mt-4 text-sm font-semibold text-ink">{title}</p>
+      <pre className={className}>{value}</pre>
     </div>
   );
 }
