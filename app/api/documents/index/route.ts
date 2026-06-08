@@ -43,16 +43,6 @@ type SupabaseQueryResult<T> = {
   data: T | null;
   error: SupabaseQueryError | null;
 };
-type SupabaseServerClient = ReturnType<typeof createClient>;
-type SupabaseTable = {
-  select: (...args: unknown[]) => SupabaseTable;
-  eq: (...args: unknown[]) => SupabaseTable;
-  order: (...args: unknown[]) => SupabaseTable;
-  update: (payload: Record<string, unknown>) => SupabaseTable;
-  insert: (payload: Array<Record<string, unknown>>) => SupabaseTable;
-  delete: () => SupabaseTable;
-  then: PromiseLike<unknown>["then"];
-};
 
 function stringifyDebugValue(value: unknown) {
   try {
@@ -86,17 +76,11 @@ function getSupabaseClient() {
   });
 }
 
-function table(supabase: SupabaseServerClient, tableName: string) {
-  return supabase.from(tableName) as unknown as SupabaseTable;
-}
-
-function documentStatusPayload(status: DocumentStatus, errorMessage: string | null = null): Record<string, unknown> {
-  const payload: DocumentUpdatePayload = {
+function documentStatusPayload(status: DocumentStatus, errorMessage: string | null = null): DocumentUpdatePayload {
+  return {
     status,
     error_message: errorMessage
   };
-
-  return payload as unknown as Record<string, unknown>;
 }
 
 function normalizeFileType(fileType: string) {
@@ -205,8 +189,9 @@ function parseJsonResponse(text: string): {
   }
 }
 
-async function indexDocument(supabase: SupabaseServerClient, document: DocumentRow) {
-  const { error: indexingStatusError } = (await table(supabase, "documents")
+async function indexDocument(supabase: any, document: DocumentRow) {
+  const { error: indexingStatusError } = (await supabase
+    .from("documents")
     .update(documentStatusPayload("indexing"))
     .eq("id", document.id)) as SupabaseQueryResult<null>;
 
@@ -237,7 +222,7 @@ async function indexDocument(supabase: SupabaseServerClient, document: DocumentR
 
     const embeddings = await createEmbeddings(chunks);
 
-    await table(supabase, "document_chunks").delete().eq("document_id", document.id);
+    await supabase.from("document_chunks").delete().eq("document_id", document.id);
 
     const rows: DocumentChunkInsertPayload[] = chunks.map((content, index) => ({
       document_id: document.id,
@@ -252,15 +237,14 @@ async function indexDocument(supabase: SupabaseServerClient, document: DocumentR
       }
     }));
 
-    const { error: insertError } = (await table(supabase, "document_chunks").insert(
-      rows as unknown as Array<Record<string, unknown>>
-    )) as SupabaseQueryResult<null>;
+    const { error: insertError } = (await supabase.from("document_chunks").insert(rows)) as SupabaseQueryResult<null>;
 
     if (insertError) {
       throw new Error(insertError.message);
     }
 
-    const { error: updateError } = (await table(supabase, "documents")
+    const { error: updateError } = (await supabase
+      .from("documents")
       .update(documentStatusPayload("indexed"))
       .eq("id", document.id)) as SupabaseQueryResult<null>;
 
@@ -277,7 +261,8 @@ async function indexDocument(supabase: SupabaseServerClient, document: DocumentR
   } catch (error) {
     const message = getErrorMessage(error);
 
-    await table(supabase, "documents")
+    await supabase
+      .from("documents")
       .update(documentStatusPayload("failed", message))
       .eq("id", document.id);
 
@@ -306,7 +291,8 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const documentId = typeof body?.documentId === "string" ? body.documentId : null;
-    let query = table(supabase, "documents")
+    let query = (supabase as any)
+      .from("documents")
       .select("id,title,file_path,file_type,status")
       .eq("status", "uploaded")
       .order("created_at", { ascending: true });
