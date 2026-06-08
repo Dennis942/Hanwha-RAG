@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import mammoth from "mammoth";
+import pdfParse from "pdf-parse";
 
 const documentsBucketName = "documents";
 const embeddingModel = "text-embedding-3-small";
@@ -15,6 +17,41 @@ type DocumentRow = {
   file_path: string;
   file_type: string;
   status: string;
+};
+
+type DocumentStatus = "uploaded" | "indexing" | "indexed" | "failed";
+type DocumentUpdatePayload = {
+  status: DocumentStatus;
+  error_message: string | null;
+};
+type DocumentChunkInsertPayload = {
+  document_id: string;
+  content: string;
+  chunk_index: number;
+  embedding: string;
+  metadata: {
+    title: string;
+    file_path: string;
+    file_type: string;
+    embedding_model: string;
+  };
+};
+type SupabaseQueryError = {
+  message: string;
+};
+type SupabaseQueryResult<T> = {
+  data: T | null;
+  error: SupabaseQueryError | null;
+};
+type SupabaseServerClient = ReturnType<typeof createClient>;
+type SupabaseTable = {
+  select: (...args: unknown[]) => SupabaseTable;
+  eq: (...args: unknown[]) => SupabaseTable;
+  order: (...args: unknown[]) => SupabaseTable;
+  update: (payload: Record<string, unknown>) => SupabaseTable;
+  insert: (payload: Array<Record<string, unknown>>) => SupabaseTable;
+  delete: () => SupabaseTable;
+  then: PromiseLike<unknown>["then"];
 };
 
 function stringifyDebugValue(value: unknown) {
@@ -49,6 +86,19 @@ function getSupabaseClient() {
   });
 }
 
+function table(supabase: SupabaseServerClient, tableName: string) {
+  return supabase.from(tableName) as unknown as SupabaseTable;
+}
+
+function documentStatusPayload(status: DocumentStatus, errorMessage: string | null = null): Record<string, unknown> {
+  const payload: DocumentUpdatePayload = {
+    status,
+    error_message: errorMessage
+  };
+
+  return payload as unknown as Record<string, unknown>;
+}
+
 function normalizeFileType(fileType: string) {
   return fileType.trim().toUpperCase();
 }
@@ -78,16 +128,12 @@ async function extractTextFromFile(file: Blob, fileType: string) {
   const buffer = Buffer.from(await file.arrayBuffer());
 
   if (normalizedType === "PDF") {
-    type PdfParse = (dataBuffer: Buffer) => Promise<{ text: string }>;
-    const pdfParseModule = (await import("pdf-parse")) as unknown as { default?: PdfParse } & PdfParse;
-    const pdfParse = pdfParseModule.default ?? pdfParseModule;
     const parsed = await pdfParse(buffer);
 
     return parsed.text;
   }
 
   if (normalizedType === "DOCX") {
-    const mammoth = await import("mammoth");
     const result = await mammoth.extractRawText({ buffer });
 
     return result.value;
@@ -159,11 +205,10 @@ function parseJsonResponse(text: string): {
   }
 }
 
-async function indexDocument(supabase: ReturnType<typeof createClient>, document: DocumentRow) {
-  const { error: indexingStatusError } = await supabase
-    .from("documents")
-    .update({ status: "indexing", error_message: null })
-    .eq("id", document.id);
+async function indexDocument(supabase: SupabaseServerClient, document: DocumentRow) {
+  const { error: indexingStatusError } = (await table(supabase, "documents")
+    .update(documentStatusPayload("indexing"))
+    .eq("id", document.id)) as SupabaseQueryResult<null>;
 
   if (indexingStatusError) {
     return {
@@ -192,9 +237,9 @@ async function indexDocument(supabase: ReturnType<typeof createClient>, document
 
     const embeddings = await createEmbeddings(chunks);
 
-    await supabase.from("document_chunks").delete().eq("document_id", document.id);
+    await table(supabase, "document_chunks").delete().eq("document_id", document.id);
 
-    const rows = chunks.map((content, index) => ({
+    const rows: DocumentChunkInsertPayload[] = chunks.map((content, index) => ({
       document_id: document.id,
       content,
       chunk_index: index,
@@ -207,16 +252,17 @@ async function indexDocument(supabase: ReturnType<typeof createClient>, document
       }
     }));
 
-    const { error: insertError } = await supabase.from("document_chunks").insert(rows);
+    const { error: insertError } = (await table(supabase, "document_chunks").insert(
+      rows as unknown as Array<Record<string, unknown>>
+    )) as SupabaseQueryResult<null>;
 
     if (insertError) {
       throw new Error(insertError.message);
     }
 
-    const { error: updateError } = await supabase
-      .from("documents")
-      .update({ status: "indexed", error_message: null })
-      .eq("id", document.id);
+    const { error: updateError } = (await table(supabase, "documents")
+      .update(documentStatusPayload("indexed"))
+      .eq("id", document.id)) as SupabaseQueryResult<null>;
 
     if (updateError) {
       throw new Error(updateError.message);
@@ -231,9 +277,8 @@ async function indexDocument(supabase: ReturnType<typeof createClient>, document
   } catch (error) {
     const message = getErrorMessage(error);
 
-    await supabase
-      .from("documents")
-      .update({ status: "failed", error_message: message })
+    await table(supabase, "documents")
+      .update(documentStatusPayload("failed", message))
       .eq("id", document.id);
 
     return {
@@ -261,8 +306,7 @@ export async function POST(request: Request) {
   try {
     const body = await request.json().catch(() => ({}));
     const documentId = typeof body?.documentId === "string" ? body.documentId : null;
-    let query = supabase
-      .from("documents")
+    let query = table(supabase, "documents")
       .select("id,title,file_path,file_type,status")
       .eq("status", "uploaded")
       .order("created_at", { ascending: true });
@@ -271,7 +315,7 @@ export async function POST(request: Request) {
       query = query.eq("id", documentId);
     }
 
-    const { data: documents, error } = await query;
+    const { data: documents, error } = (await query) as SupabaseQueryResult<DocumentRow[]>;
 
     if (error) {
       throw new Error(error.message);
