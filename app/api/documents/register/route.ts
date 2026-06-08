@@ -12,6 +12,12 @@ type RegisterBody = {
   file_path?: string;
   file_type?: string;
   file_size?: number;
+  project_id?: string | null;
+  project_name?: string | null;
+  category?: string | null;
+  document_type?: string | null;
+  tags?: string[] | string | null;
+  description?: string | null;
 };
 
 function stringifyDebugValue(value: unknown) {
@@ -66,6 +72,17 @@ function isSafeStoragePath(filePath: string, fileType: string) {
   return new RegExp(`^uploads/[0-9a-f-]{36}\\.${fileType.toLowerCase()}$`, "i").test(filePath);
 }
 
+function parseTags(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.map(String).map((tag) => tag.trim()).filter(Boolean);
+  }
+
+  return String(value ?? "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
 export async function POST(request: Request) {
   const supabase = getSupabaseClient();
 
@@ -86,6 +103,8 @@ export async function POST(request: Request) {
     const filePath = String(body.file_path ?? "").trim();
     const fileType = normalizeFileType(String(body.file_type ?? ""));
     const fileSize = Number(body.file_size ?? 0);
+    const projectId = body.project_id ? String(body.project_id) : null;
+    let projectName = body.project_name ? String(body.project_name) : null;
 
     if (!title || !filePath || !isAllowedFileType(fileType) || !isSafeStoragePath(filePath, fileType)) {
       return NextResponse.json(
@@ -119,19 +138,35 @@ export async function POST(request: Request) {
       );
     }
 
+    if (projectId && !projectName) {
+      const { data: project } = await (supabase as any)
+        .from("projects")
+        .select("name")
+        .eq("id", projectId)
+        .maybeSingle();
+      projectName = project?.name ?? null;
+    }
+
     const row = {
       title,
       file_path: filePath,
       file_type: fileType,
       file_size: fileSize,
+      project_id: projectId,
+      project_name: projectName,
+      category: body.category || null,
+      document_type: body.document_type || null,
+      tags: parseTags(body.tags),
+      description: body.description || null,
       status: "uploaded",
-      created_at: new Date().toISOString()
+      created_at: new Date().toISOString(),
+      updated_at: new Date().toISOString()
     };
 
     const { data, error } = await (supabase as any)
       .from("documents")
       .insert(row)
-      .select("id,title,file_path,file_type,file_size,status,created_at")
+      .select("id,title,file_path,file_type,file_size,project_id,project_name,category,document_type,tags,description,status,created_at")
       .single();
 
     if (error) {
