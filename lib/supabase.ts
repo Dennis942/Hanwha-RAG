@@ -21,5 +21,6 @@ export type SupabaseDocument = {
   file_path: string;
   file_type: string;
   status: string;
+  error_message?: string | null;
   created_at: string;
 };
