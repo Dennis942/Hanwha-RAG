@@ -8,6 +8,7 @@ create table if not exists public.documents (
   title text not null,
   file_path text not null unique,
   file_type text not null check (file_type in ('PDF', 'TXT', 'DOCX')),
+  file_size bigint,
   status text not null default 'uploaded',
   created_at timestamptz not null default now()
 );
@@ -17,6 +18,9 @@ add column if not exists file_path text;
 
 alter table public.documents
 add column if not exists file_type text;
+
+alter table public.documents
+add column if not exists file_size bigint;
 
 alter table public.documents
 add column if not exists error_message text;
