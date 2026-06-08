@@ -16,7 +16,11 @@ Next.js, TypeScript, Tailwind CSS 기반의 사내 업무 히스토리 조회 MV
 
 - `app/page.tsx`: App Router page 엔트리
 - `app/api/chat/route.ts`: 질문 embedding, chunk 검색, 문서 기반 답변 생성, chat log 저장 API
+- `app/api/projects/route.ts`: 프로젝트 목록 조회 및 생성 API
+- `app/api/projects/[id]/route.ts`: 프로젝트 상세 조회 및 수정 API
+- `app/api/search/route.ts`: 업로드 문서 및 indexed chunk 키워드 검색 API
 - `app/api/documents/register/route.ts`: Storage 업로드 후 documents 테이블 metadata 등록 API
+- `app/api/documents/[id]/route.ts`: 문서 프로젝트/카테고리/태그 분류 수정 API
 - `app/api/documents/index/route.ts`: 문서 텍스트 추출, chunking, OpenAI embedding, Supabase 저장 API
 - `app/globals.css`: Tailwind 및 전역 스타일
 - `components/home-page.tsx`: 전체 MVP 화면과 클라이언트 상태
@@ -39,13 +43,19 @@ npm run dev
 ## Supabase 설정
 
 1. Supabase 프로젝트를 생성합니다.
-2. Supabase SQL Editor에서 `supabase-schema.sql` 내용을 실행합니다. 기존에 예전 `documents` 테이블을 만든 적이 있어도 다시 실행해야 `file_path`, `file_type`, `file_size`, `error_message`, `document_chunks`, `chat_logs`, `match_document_chunks` 함수와 PostgREST schema cache reload가 적용됩니다.
+2. Supabase SQL Editor에서 `supabase-schema.sql` 내용을 실행합니다. 기존에 예전 `documents` 테이블을 만든 적이 있어도 다시 실행해야 `projects`, `documents` metadata 컬럼, `document_chunks`, `chat_logs`, 필터 지원 `match_document_chunks` 함수와 PostgREST schema cache reload가 적용됩니다.
 3. Storage bucket 이름은 `documents`를 사용합니다. SQL에 bucket 생성문이 포함되어 있으므로, 이미 만든 경우에도 그대로 실행할 수 있습니다.
 4. `documents` 테이블에는 업로드 성공 시 아래 값이 저장됩니다.
    - `title`
    - `file_path`
    - `file_type`
    - `file_size`
+   - `project_id`
+   - `project_name`
+   - `category`
+   - `document_type`
+   - `tags`
+   - `description`
    - `status` = `uploaded`
    - `created_at`
 5. 파일은 20MB 이하의 PDF, TXT, DOCX만 허용합니다. 브라우저가 Supabase Storage `documents` bucket에 직접 업로드하고, Storage 경로는 원본 파일명 대신 `uploads/{uuid}.{ext}` 형식으로 저장합니다. 업로드 성공 후 `/api/documents/register` API 라우트가 원본 파일명, Storage path, 파일 유형, 파일 크기를 `documents` 테이블에 저장합니다.
@@ -66,3 +76,12 @@ OPENAI_API_KEY=your-openai-api-key
 환경변수 등록 후 Vercel에서 다시 배포하면 문서 업로드 화면에서 PDF, TXT, DOCX 파일을 Supabase Storage의 `documents` bucket에 직접 저장한 뒤 `/api/documents/register`가 문서 metadata를 저장합니다. 큰 PDF도 Vercel Function body limit에 걸리지 않도록 파일 본문은 Vercel API로 보내지 않습니다.
 
 현재 구현은 문서 업로드, 인덱싱, 업로드 문서 기반 질문 답변까지 연결되어 있습니다. `/api/chat`은 질문 embedding을 생성하고 `match_document_chunks`로 상위 chunk 5개를 찾은 뒤, 등록된 문서 근거 안에서만 답변하고 `chat_logs`에 질문/답변/source를 저장합니다.
+
+## 통합 업무 흐름
+
+- 프로젝트는 업무 폴더 역할을 하며 이름, 설명, 상태, 카테고리, 태그, 목적, 담당자, 기간, 메모, 결정사항, 타임라인을 저장합니다.
+- 문서 업로드 시 프로젝트, 업무 카테고리, 문서 유형, 태그, 설명을 함께 지정하고 `documents` metadata로 저장합니다.
+- 인덱싱 시 `document_chunks.metadata`에는 문서명, file path, 프로젝트, 카테고리, 문서 유형, 태그, chunk 번호, embedding model이 함께 저장됩니다.
+- Q&A 필터의 프로젝트/카테고리/문서 유형/태그는 `match_document_chunks` 검색 조건으로 전달됩니다.
+- 왼쪽 최근 업무 히스토리는 `chat_logs` 기반으로 최근 질문, 일시, 출처 수, 프로젝트명을 보여주며 클릭 시 저장된 질문/답변 상세를 표시합니다.
+- 업무 검색은 답변 생성이 아니라 업로드 문서와 매칭 chunk를 찾는 화면입니다. Q&A는 검색된 chunk를 context로 사용해 문서 근거 안에서만 답변합니다.
