@@ -2,9 +2,6 @@
 
 import { useEffect, useState } from "react";
 import {
-  Archive,
-  CircleArrowRight,
-  FileSearch,
   FileText,
   Filter,
   History,
@@ -12,19 +9,18 @@ import {
   LayoutDashboard,
   Lock,
   MessageSquareText,
-  PanelLeftClose,
-  PlusCircle,
   RefreshCcw,
   Search,
   ShieldCheck,
-  Sparkles,
   Upload,
 } from "lucide-react";
+import { ChatbotPanel } from "@/components/chat/ChatbotPanel";
+import { RecentHistoryList, type RecentHistoryItem } from "@/components/history/RecentHistoryList";
+import { AppLayout } from "@/components/layout/AppLayout";
 import { Badge, FieldLabel, Panel, SectionHeader } from "@/components/ui";
-import { currentUser, documents, projects, recentQuestions, tags } from "@/lib/mock-data";
+import { documents, projects, tags } from "@/lib/mock-data";
 import { isSupabaseConfigured, supabase, supabaseDiagnostics, type SupabaseDocument, type SupabaseProject } from "@/lib/supabase";
 import type { ChangeEvent, ReactNode } from "react";
-import type { LucideIcon } from "lucide-react";
 
 const statusTone = {
   uploaded: "blue",
@@ -271,14 +267,6 @@ const nav = [
   { id: "admin", label: "관리자", icon: ShieldCheck }
 ];
 
-const quickActions: Array<{ page: string; icon: LucideIcon; label: string }> = [
-  { page: "ask", icon: MessageSquareText, label: "문서 기반 질문하기" },
-  { page: "documents", icon: Upload, label: "문서 등록" },
-  { page: "search", icon: FileSearch, label: "문서/업무 검색" },
-  { page: "admin", icon: ShieldCheck, label: "인덱싱 상태" },
-  { page: "project", icon: History, label: "프로젝트 보기" }
-];
-
 export default function HomePage() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -371,80 +359,31 @@ export default function HomePage() {
     return <LoginPage loginError={loginError} onLogin={handleLogin} />;
   }
 
-  return (
-    <main className="min-h-screen">
-      <div className="grid min-h-screen lg:grid-cols-[260px_1fr]">
-        <aside className="border-r border-line bg-white px-4 py-5">
-          <div className="mb-6 flex items-center justify-between px-2">
-            <div className="flex items-center gap-3">
-              <HanwhaMark />
-              <div>
-                <p className="text-xl font-bold tracking-normal text-ink">Eagle Next</p>
-                <p className="text-xs text-slate-500">Hanwha Work AI</p>
-              </div>
-            </div>
-            <PanelLeftClose size={18} className="text-slate-500" aria-hidden />
-          </div>
-          <button
-            type="button"
-            onClick={startNewQuestionSession}
-            className="mb-6 flex h-12 w-full items-center justify-center gap-2 rounded-md border border-[#f37321] bg-white text-sm font-bold text-[#f37321] transition hover:bg-orange-50"
-          >
-            <PlusCircle size={18} aria-hidden />
-            새 질문 시작
-          </button>
-          <nav className="space-y-1">
-            {nav.map((item) => {
-              const Icon = item.icon;
-              const isActive = activePage === item.id;
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => setActivePage(item.id)}
-                  className={`flex h-10 w-full items-center gap-3 rounded-md px-3 text-sm font-medium transition ${
-                    isActive ? "bg-[#111111] text-white" : "text-slate-700 hover:bg-field"
-                  }`}
-                >
-                  <Icon size={18} aria-hidden />
-                  {item.label}
-                </button>
-              );
-            })}
-          </nav>
-          <div className="mt-8 border-t border-line pt-5">
-            <p className="mb-3 px-2 text-xs font-bold text-slate-500">최근 업무 히스토리</p>
-            <div className="space-y-1">
-              {recentChatLogs.length === 0 && recentQuestions.slice(0, 3).map((item) => (
-                <button key={item} type="button" onClick={() => openQuestion(item)} className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-slate-600 hover:bg-field">
-                  <Archive size={15} aria-hidden />
-                  <span className="truncate">{item}</span>
-                </button>
-              ))}
-              {recentChatLogs.map((log) => (
-                <button key={log.id} type="button" onClick={() => openHistory(log)} className="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-600 hover:bg-field">
-                  <span className="block truncate font-semibold text-ink">{log.question}</span>
-                  <span className="mt-1 block text-xs text-slate-500">{formatDateTime(log.created_at)} · {(log.sources ?? []).length} sources · {log.project_name ?? "전체"}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="mt-8 rounded-md border border-line bg-field p-3">
-            <p className="text-sm font-semibold text-ink">{currentUser.name}</p>
-            <p className="mt-1 text-xs text-slate-500">{currentUser.email}</p>
-            <Badge tone="amber">Admin</Badge>
-          </div>
-          <p className="mt-4 text-center text-[11px] font-bold uppercase tracking-[0.16em] text-slate-400">Powered by Hanwha AI</p>
-        </aside>
+  const currentPageLabel = nav.find((item) => item.id === activePage)?.label ?? "홈";
 
-        <section className="px-5 py-6 lg:px-8">
-          <AppHeader setActivePage={setActivePage} onStartQuestion={startNewQuestionSession} />
+  return (
+    <AppLayout
+      activePage={activePage}
+      currentPageLabel={currentPageLabel}
+      navItems={nav}
+      onNavigate={setActivePage}
+      onUploadClick={() => setActivePage("documents")}
+      sidebarContent={
+        <RecentHistoryList
+          logs={recentChatLogs as RecentHistoryItem[]}
+          onOpenHistory={(log) => openHistory(log as ChatLog)}
+          onOpenQuestion={openQuestion}
+        />
+      }
+    >
           {activePage === "dashboard" && (
-            <Dashboard
+            <ChatbotPanel
               question={question}
-              openQuestion={openQuestion}
-              setActivePage={setActivePage}
-              setQuestion={setQuestion}
+              onOpenQuestion={openQuestion}
+              onQuestionChange={setQuestion}
+              onSearchClick={() => setActivePage("search")}
+              onSubmitQuestion={() => setActivePage("ask")}
+              onUploadClick={() => setActivePage("documents")}
             />
           )}
           {activePage === "ask" && (
@@ -489,9 +428,7 @@ export default function HomePage() {
           {activePage === "documents" && <DocumentsPage projects={projectRows} onProjectsChanged={handleDocumentMetadataChanged} />}
           {activePage === "project" && <ProjectPage projects={projectRows} onProjectsChanged={loadProjects} />}
           {activePage === "admin" && <AdminPage projects={projectRows} />}
-        </section>
-      </div>
-    </main>
+    </AppLayout>
   );
 }
 
@@ -551,106 +488,6 @@ function LoginPage({ loginError, onLogin }: { loginError: string; onLogin: (form
         </form>
       </section>
     </main>
-  );
-}
-
-function HanwhaMark() {
-  return (
-    <div className="relative h-11 w-11" aria-label="Hanwha inspired orange mark">
-      <span className="absolute left-1 top-3 h-6 w-9 rotate-[-20deg] rounded-[50%] border-[5px] border-[#f37321]" />
-      <span className="absolute left-3 top-4 h-6 w-8 rotate-[24deg] rounded-[50%] border-[4px] border-[#f89b61]" />
-      <span className="absolute left-4 top-2 h-7 w-8 rotate-[14deg] rounded-[50%] border-[4px] border-[#ffb37a]" />
-    </div>
-  );
-}
-
-function AppHeader({ onStartQuestion, setActivePage }: { onStartQuestion: () => void; setActivePage: (page: string) => void }) {
-  return (
-    <header className="mb-4 flex flex-col justify-between gap-4 md:flex-row md:items-center">
-      <div>
-        <p className="text-sm font-semibold text-[#f37321]">Hanwha Work AI</p>
-        <h1 className="mt-1 text-2xl font-bold text-ink">업무 히스토리 AI 플랫폼</h1>
-      </div>
-      <div className="flex gap-2">
-        <button type="button" onClick={() => setActivePage("documents")} className="flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-slate-700">
-          <Upload size={17} aria-hidden />
-          문서 등록
-        </button>
-        <button
-          type="button"
-          onClick={onStartQuestion}
-          aria-label="업로드 및 인덱싱된 문서를 기준으로 질문합니다."
-          title="업로드 및 인덱싱된 문서를 기준으로 질문합니다."
-          className="flex h-10 items-center gap-2 rounded-md bg-[#f37321] px-3 text-sm font-semibold text-white"
-        >
-          <MessageSquareText size={17} aria-hidden />
-          문서 기반 질문하기
-        </button>
-      </div>
-    </header>
-  );
-}
-
-function Dashboard({
-  openQuestion,
-  question,
-  setActivePage,
-  setQuestion
-}: {
-  openQuestion: (question: string) => void;
-  question: string;
-  setActivePage: (page: string) => void;
-  setQuestion: (value: string) => void;
-}) {
-  return (
-    <div className="relative min-h-[720px] overflow-hidden rounded-md border border-line bg-white">
-      <div className="min-h-[720px]">
-        <section className="mx-auto flex min-h-[720px] w-full max-w-[1080px] flex-col px-6 py-8">
-          <div className="mx-auto w-full flex-1 pt-8">
-            <div className="text-center">
-              <Badge tone="amber">Recommendation</Badge>
-              <h2 className="mt-3 text-2xl font-bold text-ink">홈에서 업무 흐름을 시작하세요</h2>
-              <p className="mt-2 text-sm text-slate-500">프로젝트 생성, 문서 등록, 인덱싱, 문서 Q&A, 최근 히스토리 확인까지 이어집니다.</p>
-            </div>
-            <div className="mx-auto mt-8 grid w-full max-w-[860px] gap-4 md:grid-cols-3">
-              {[
-                "최근 결정사항 요약해줘",
-                "계약서 보안 조건 찾아줘",
-                "운영 장애 이력 알려줘"
-              ].map((item) => (
-                <button key={item} type="button" onClick={() => openQuestion(item)} className="min-h-28 rounded-md border border-line bg-field p-4 text-center text-sm font-semibold text-slate-700 shadow-sm hover:border-[#f37321] hover:bg-orange-50">
-                  <Sparkles className="mx-auto mb-3 text-[#f37321]" size={20} aria-hidden />
-                  {item}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="mx-auto w-full max-w-[1040px] pb-2">
-            <div className="rounded-md border border-line bg-white p-3 shadow-panel">
-              <textarea
-                value={question}
-                onChange={(event) => setQuestion(event.target.value)}
-                className="min-h-16 w-full resize-none border-0 bg-white p-2 text-base outline-none"
-                placeholder="업로드 및 인덱싱된 문서에 질문할 내용을 입력하세요."
-              />
-              <div className="flex items-center justify-between">
-                <div className="flex gap-2">
-                  <button type="button" onClick={() => setActivePage("documents")} className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-field" title="문서 업로드">
-                    <Upload size={18} aria-hidden />
-                  </button>
-                  <button type="button" onClick={() => setActivePage("search")} className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-field" title="검색">
-                    <Search size={18} aria-hidden />
-                  </button>
-                </div>
-                <button type="button" onClick={() => setActivePage("ask")} title="문서 Q&A로 이동" className="flex h-11 w-11 items-center justify-center rounded-md bg-[#f37321] text-white">
-                  <CircleArrowRight size={24} aria-hidden />
-                </button>
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
-    </div>
   );
 }
 
