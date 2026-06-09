@@ -7,7 +7,7 @@ Next.js, TypeScript, Tailwind CSS 기반의 사내 업무 히스토리 조회 MV
 - 로그인
 - 홈 화면 및 기능 바로가기
 - 문서 업로드 및 문서 목록
-- 문서/업무 검색
+- 문서 관리 통합 검색
 - 문서 Q&A 및 출처 표시
 - 프로젝트 상세
 - 관리자 인덱싱 상태
@@ -25,7 +25,7 @@ Next.js, TypeScript, Tailwind CSS 기반의 사내 업무 히스토리 조회 MV
 - `app/globals.css`: Tailwind 및 전역 스타일
 - `components/home-page.tsx`: 기존 Supabase/RAG 기능을 연결하는 클라이언트 상태 컨테이너
 - `components/layout/AppLayout.tsx`: 좌측 사이드바, 상단 헤더, 메인 콘텐츠를 묶는 앱 레이아웃
-- `components/layout/Sidebar.tsx`: 홈, 문서 Q&A, 문서/업무 검색, 프로젝트, 문서 관리, 관리자 메뉴
+- `components/layout/Sidebar.tsx`: 홈, 문서 Q&A, 문서 업로드, 문서 관리, 프로젝트, 관리자 메뉴
 - `components/layout/Header.tsx`: 서비스명, 현재 화면명, 사용자 프로필 placeholder
 - `components/chat/ChatbotPanel.tsx`: 첫 화면의 챗봇 중심 Q&A 패널
 - `components/chat/ChatMessage.tsx`: 채팅 메시지 bubble
@@ -116,12 +116,14 @@ API Route는 실패 시 아래 형태를 공통으로 반환합니다. 화면은
 - 프로젝트는 업무 폴더 역할을 하며 이름, 설명, 상태, 카테고리, 태그, 목적, 담당자, 기간, 메모, 결정사항, 타임라인을 저장합니다.
 - `새 질문 시작`은 기존 질문 입력, 히스토리 상세, 답변, 출처 패널을 초기화하고 문서 Q&A의 새 질문 모드로 이동합니다.
 - 홈은 기본 진입 화면이며, 문서 Q&A는 업로드 및 인덱싱된 문서를 근거로 질문하는 화면입니다. 최근 업무 히스토리는 기존 질문/답변을 다시 확인하는 읽기 화면입니다.
-- 문서 업로드 시 프로젝트, 업무 카테고리, 문서 유형, 태그, 설명을 함께 지정하고 `documents` metadata로 저장합니다.
+- 문서 업로드 메뉴는 새 문서 등록 전용 화면입니다. 프로젝트, 카테고리, 문서 유형, 태그, 설명을 입력하고 파일을 업로드한 뒤 문서 관리 화면에서 결과를 확인합니다.
+- 문서 관리 화면은 기존 문서 관리와 문서/업무 검색을 통합한 화면입니다. 문서명 검색, 프로젝트/카테고리/문서 유형/태그/상태/업로드일 필터, 인덱싱된 본문 chunk 검색, 분류 수정, 인덱싱 실행, 삭제, 이 문서 기준 질문하기를 제공합니다.
 - 문서 관리에서 프로젝트/카테고리/문서 유형/태그/설명을 수정하면 `documents.status`를 `uploaded`로 되돌려 재인덱싱을 유도합니다.
+- 문서 삭제 시 `documents` row, `document_chunks` row, Supabase Storage `documents` bucket의 원본 파일을 함께 삭제합니다.
 - 인덱싱 시 `document_chunks.metadata`에는 문서명, file path, 프로젝트, 카테고리, 문서 유형, 태그, chunk 번호, embedding model이 함께 저장됩니다.
 - Q&A 필터의 프로젝트/카테고리/문서 유형/태그는 `match_document_chunks` 검색 조건으로 전달됩니다.
-- 왼쪽 최근 업무 히스토리는 `chat_logs` 기반으로 최근 질문, 일시, 출처 수, 프로젝트명을 보여주며 클릭 시 저장된 질문/답변 상세를 표시합니다.
-- 문서/업무 검색은 답변 생성이 아니라 최신 `documents` metadata와 매칭 chunk를 찾는 화면입니다. 결과 카드에는 `documents` 테이블의 프로젝트, 카테고리, 문서 유형, 태그, 상태를 우선 표시합니다.
+- 왼쪽 최근 업무 히스토리는 `chat_logs` 기반으로 최근 질문, 일시, 출처 수, 프로젝트명을 보여주며 클릭 시 저장된 질문/답변 상세를 표시합니다. 히스토리 삭제 시 `chat_logs` row가 삭제됩니다.
+- 문서 관리의 검색 기능은 답변 생성이 아니라 최신 `documents` metadata와 매칭 chunk를 찾는 기능입니다. 결과 카드에는 `documents` 테이블의 프로젝트, 카테고리, 문서 유형, 태그, 상태를 우선 표시합니다.
 - 분류 수정 후 업무검색 필터는 `documents` 테이블의 실제 distinct 값 기준으로 다시 구성됩니다. 본문 chunk metadata는 재인덱싱 후 최신 분류값으로 갱신됩니다.
 
 ## 운영 전 체크리스트
