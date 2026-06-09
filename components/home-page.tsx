@@ -195,6 +195,10 @@ function getNetworkError(error: unknown) {
   };
 }
 
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 const nav = [
   { id: "dashboard", label: "메인 챗봇", icon: LayoutDashboard },
   { id: "ask", label: "Q&A", icon: MessageSquareText },
@@ -610,9 +614,27 @@ function AskPage(props: {
         .from("documents")
         .select("category,document_type,tags")
         .not("status", "eq", "failed");
-      const categories = Array.from(new Set((data ?? []).map((item: any) => item.category).filter(Boolean)));
-      const types = Array.from(new Set((data ?? []).map((item: any) => item.document_type).filter(Boolean)));
-      const dynamicTags = Array.from(new Set((data ?? []).flatMap((item: any) => item.tags ?? []).filter(Boolean)));
+      const categories: string[] = Array.from(
+        new Set(
+          (data ?? [])
+            .map((item: any) => item.category)
+            .filter(isNonEmptyString)
+        )
+      );
+      const types: string[] = Array.from(
+        new Set(
+          (data ?? [])
+            .map((item: any) => item.document_type)
+            .filter(isNonEmptyString)
+        )
+      );
+      const dynamicTags: string[] = Array.from(
+        new Set(
+          (data ?? [])
+            .flatMap((item: any) => (Array.isArray(item.tags) ? item.tags : []))
+            .filter(isNonEmptyString)
+        )
+      );
 
       setFilterOptions({
         categories: categories.length > 0 ? categories : documentCategories,
