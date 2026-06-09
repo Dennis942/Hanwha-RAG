@@ -139,6 +139,12 @@ drop constraint if exists documents_file_type_check;
 alter table public.documents
 add constraint documents_file_type_check check (file_type in ('PDF', 'TXT', 'DOCX'));
 
+alter table public.documents
+drop constraint if exists documents_status_check;
+
+alter table public.documents
+add constraint documents_status_check check (status in ('uploaded', 'indexing', 'indexed', 'failed'));
+
 create unique index if not exists documents_file_path_idx
 on public.documents (file_path);
 
@@ -193,6 +199,9 @@ add column if not exists created_at timestamptz not null default now();
 
 create index if not exists document_chunks_document_id_idx
 on public.document_chunks (document_id);
+
+create unique index if not exists document_chunks_document_id_chunk_index_idx
+on public.document_chunks (document_id, chunk_index);
 
 create index if not exists document_chunks_embedding_idx
 on public.document_chunks
@@ -278,14 +287,6 @@ to anon
 using (true);
 
 drop policy if exists "Allow document insert" on public.documents;
-create policy "Allow document insert"
-on public.documents
-for insert
-to anon
-with check (
-  status = 'uploaded'
-  and file_type in ('PDF', 'TXT', 'DOCX')
-);
 
 drop policy if exists "Allow document update" on public.documents;
 
@@ -334,10 +335,5 @@ with check (
 );
 
 drop policy if exists "Allow document file read" on storage.objects;
-create policy "Allow document file read"
-on storage.objects
-for select
-to anon
-using (bucket_id = 'documents');
 
 notify pgrst, 'reload schema';
