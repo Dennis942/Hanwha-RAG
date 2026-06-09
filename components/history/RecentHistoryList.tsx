@@ -14,6 +14,7 @@ export type RecentHistoryItem = {
 
 export function RecentHistoryList(props: {
   logs: RecentHistoryItem[];
+  onDeleteHistory?: (log: RecentHistoryItem) => void;
   onOpenHistory: (log: RecentHistoryItem) => void;
   onOpenQuestion: (question: string) => void;
 }) {
@@ -28,13 +29,19 @@ export function RecentHistoryList(props: {
           </button>
         ))}
         {props.logs.map((log) => (
-          <button key={log.id} type="button" onClick={() => props.onOpenHistory(log)} className="block w-full rounded-md px-3 py-2 text-left text-sm text-slate-600 hover:bg-field focus:outline-none focus:ring-2 focus:ring-ocean/30">
-            <span className="block truncate font-semibold text-ink">{log.question}</span>
-            <span className="mt-1 block text-xs text-slate-500">{formatDateTime(log.created_at)} · {(log.sources ?? []).length} sources · {log.project_name ?? "전체"}</span>
-          </button>
+          <div key={log.id} className="group flex items-start gap-2 rounded-md px-3 py-2 hover:bg-field">
+            <button type="button" onClick={() => props.onOpenHistory(log)} className="min-w-0 flex-1 text-left text-sm text-slate-600 focus:outline-none focus:ring-2 focus:ring-ocean/30">
+              <span className="block truncate font-semibold text-ink">{log.question}</span>
+              <span className="mt-1 block text-xs text-slate-500">{formatDateTime(log.created_at)} · {(log.sources ?? []).length} sources · {log.project_name ?? "전체"}</span>
+            </button>
+            {props.onDeleteHistory && (
+              <button type="button" onClick={() => props.onDeleteHistory?.(log)} className="rounded-md border border-rose-200 px-2 py-1 text-xs font-semibold text-rose-700 opacity-100 hover:bg-rose-50 md:opacity-0 md:group-hover:opacity-100">
+                삭제
+              </button>
+            )}
+          </div>
         ))}
       </div>
     </div>
   );
 }
-
