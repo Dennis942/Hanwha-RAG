@@ -11,7 +11,7 @@ create table if not exists public.projects (
   category text,
   tags text[] default '{}'::text[],
   objective text,
-  owner text,
+  owner text default '미지정',
   start_date date,
   end_date date,
   memo text,
@@ -36,6 +36,12 @@ alter table public.projects add column if not exists timeline jsonb default '[]'
 alter table public.projects add column if not exists archived boolean default false;
 alter table public.projects add column if not exists created_at timestamptz not null default now();
 alter table public.projects add column if not exists updated_at timestamptz not null default now();
+
+update public.projects
+set owner = '미지정'
+where owner is null or btrim(owner) = '';
+
+alter table public.projects alter column owner set default '미지정';
 
 create table if not exists public.documents (
   id uuid primary key default gen_random_uuid(),
