@@ -258,9 +258,8 @@ async function loadDocumentFilterOptions() {
 }
 
 const nav = [
-  { id: "dashboard", label: "홈", icon: LayoutDashboard },
-  { id: "ask", label: "문서 Q&A", icon: MessageSquareText },
-  { id: "upload", label: "문서 업로드", icon: Upload },
+  { id: "dashboard", label: "메인화면", icon: LayoutDashboard },
+  { id: "ask", label: "업무 질의", icon: MessageSquareText },
   { id: "documents", label: "문서 관리", icon: FileText },
   { id: "project", label: "프로젝트", icon: History },
   { id: "admin", label: "관리자", icon: ShieldCheck }
@@ -271,7 +270,7 @@ export default function HomePage() {
   const [loginError, setLoginError] = useState("");
   const [activePage, setActivePage] = useState("dashboard");
   const [question, setQuestion] = useState("RAG MVP에서 가장 먼저 구현해야 하는 화면은 무엇인가요?");
-  const [searchQuery, setSearchQuery] = useState("RAG");
+  const [searchQuery, setSearchQuery] = useState("");
   const [projectFilter, setProjectFilter] = useState("");
   const [tagFilter, setTagFilter] = useState("");
   const [typeFilter, setTypeFilter] = useState("");
@@ -386,7 +385,7 @@ export default function HomePage() {
     return <LoginPage loginError={loginError} onLogin={handleLogin} />;
   }
 
-  const currentPageLabel = nav.find((item) => item.id === activePage)?.label ?? "홈";
+  const currentPageLabel = activePage === "upload" ? "문서 업로드" : nav.find((item) => item.id === activePage)?.label ?? "메인화면";
 
   return (
     <AppLayout
@@ -475,7 +474,7 @@ function LoginPage({ loginError, onLogin }: { loginError: string; onLogin: (form
             계약서, 회의록, 결정사항, 운영 이력을 업로드하고 질문하면 관련 문서와 출처를 함께 확인할 수 있는 사내 업무 지식베이스 MVP입니다.
           </p>
           <div className="mt-8 grid gap-3 sm:grid-cols-3">
-            {["문서 등록", "문서 Q&A", "출처 검증"].map((item) => (
+            {["문서 등록", "업무 질의", "출처 검증"].map((item) => (
               <div key={item} className="rounded-md border border-line bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-panel">
                 {item}
               </div>
@@ -646,7 +645,7 @@ function AskPage(props: {
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
       <Panel>
-        <SectionHeader title="문서 Q&A" action={<Badge tone="amber">출처 기반 답변</Badge>} />
+        <SectionHeader title="업무 질의" action={<Badge tone="amber">출처 기반 답변</Badge>} />
         <div className="space-y-4 p-5">
           <PageIntro
             title="질문하면 관련 문서와 근거를 함께 보여줍니다"
@@ -1044,7 +1043,7 @@ function DocumentManagementPage(props: {
                 onClick={() => askFromDocument(document)}
                 className="mt-3 rounded-md border border-line px-3 py-2 text-xs font-semibold text-slate-700"
               >
-                이 문서 기준으로 문서 Q&A
+                이 문서 기준으로 업무 질의
               </button>
             </article>
           ))}
@@ -1055,6 +1054,7 @@ function DocumentManagementPage(props: {
       <SectionHeader title="업로드 문서 목록" action={<button type="button" onClick={() => void loadDocuments()} className="flex items-center gap-2 rounded-md border border-line px-3 py-2 text-xs font-semibold text-slate-700"><RefreshCcw size={14} aria-hidden />새로고침</button>} />
       <SupabaseDocumentTable
         documents={visibleDocumentRows}
+        emptyMessage={documentRows.length === 0 ? "아직 업로드된 문서가 없습니다." : "현재 검색어 또는 필터에 맞는 문서가 없습니다."}
         isLoading={isLoadingDocuments}
         projects={props.projects}
         indexingDocumentId={indexingDocumentId}
@@ -1309,8 +1309,8 @@ function DocumentUploadPage({ onOpenDocuments, projects, onProjectsChanged }: { 
         <SectionHeader title="문서 업로드" action={<Badge tone={isSupabaseConfigured ? "green" : "red"}>{isSupabaseConfigured ? "Supabase 연결" : "설정 필요"}</Badge>} />
         <div className="p-5">
           <PageIntro
-            title="문서 업로드 및 인덱싱 요청"
-            description="PDF, DOCX, TXT 파일을 등록하면 Supabase Storage documents bucket에 저장하고 documents 테이블에 업로드 상태를 기록합니다."
+            title="문서 업로드"
+            description="프로젝트 진행 기록, 회의록, 계약/견적 이력 문서를 업로드합니다."
           />
           <div className="mb-4 grid gap-3 rounded-md border border-line bg-white p-4 md:grid-cols-2">
             <label className="text-sm font-semibold text-slate-700">
@@ -1921,6 +1921,7 @@ function DebugBlock({ title, value, tone = "neutral" }: { title: string; value: 
 
 function SupabaseDocumentTable({
   documents,
+  emptyMessage = "아직 업로드된 문서가 없습니다.",
   indexingDocumentId = "",
   isLoading,
   projects = [],
@@ -1930,6 +1931,7 @@ function SupabaseDocumentTable({
   onIndexDocument
 }: {
   documents: SupabaseDocument[];
+  emptyMessage?: string;
   indexingDocumentId?: string;
   isLoading: boolean;
   projects?: SupabaseProject[];
@@ -1943,7 +1945,7 @@ function SupabaseDocumentTable({
   }
 
   if (documents.length === 0) {
-    return <p className="p-5 text-sm text-slate-500">아직 업로드된 문서가 없습니다.</p>;
+    return <p className="p-5 text-sm text-slate-500">{emptyMessage}</p>;
   }
 
   return (
