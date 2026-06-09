@@ -68,3 +68,68 @@ export type IngestionJob = {
   completedAt?: string;
   error?: string;
 };
+
+export type ProjectRecord = {
+  id: string;
+  name: string;
+  status: string;
+  owner: string;
+  period?: string;
+  tags: string[];
+  updatedAt?: string;
+  documentCount?: number;
+  decisionCount?: number;
+};
+
+export type UploadedDocument = {
+  id: string;
+  title: string;
+  fileType: string;
+  projectName?: string;
+  category?: string;
+  documentType?: string;
+  tags: string[];
+  uploader?: string;
+  uploadedAt?: string;
+  status: string;
+  filePath?: string;
+};
+
+export type ChatMessage = {
+  id: string;
+  role: "user" | "assistant" | "system";
+  content: string;
+  createdAt?: string;
+};
+
+export type ChatLog = {
+  id: string;
+  question: string;
+  answer: string;
+  sources: unknown[];
+  filters?: Record<string, unknown> | null;
+  projectId?: string | null;
+  projectName?: string | null;
+  createdAt: string;
+};
+
+export type AdminActivityLog = {
+  id: string;
+  actor: string;
+  action: string;
+  createdAt: string;
+  status: "성공" | "실패" | "대기";
+};
+
+export type SearchResult = {
+  id: string;
+  title: string;
+  projectName?: string;
+  category?: string;
+  documentType?: string;
+  tags: string[];
+  fileType?: string;
+  status: string;
+  chunkPreview?: string;
+  filePath?: string;
+};
