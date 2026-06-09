@@ -52,6 +52,8 @@ const projectStatuses = ["진행", "보류", "완료", "검토중"];
 const projectCategories = ["토큰증권 플랫폼", "계약 관리 고도화", "감리/입찰", "MSP/클라우드", "뮤직카우", "NXT/NXG", "스테이블코인", "내부 업무개선", "기타"];
 const documentCategories = ["결정사항", "회의록", "계약/협약", "보고자료", "제안서", "입찰/감리", "기술문서", "정책/규정", "운영/장애", "기타"];
 const documentTypes = ["보고서", "회의록", "계약서", "제안서", "기술문서", "산출물", "이메일/메모", "기타"];
+const defaultOwner = "미지정";
+const defaultFilterOptions = { categories: documentCategories, documentTypes, tags: [] as string[], statuses: [] as string[] };
 
 type UploadDebugInfo = {
   selectedFile?: string;
@@ -88,6 +90,15 @@ type RegisterApiResponse = {
     name?: string;
     message?: string;
     stack?: string;
+  };
+};
+
+type ApiErrorResponse = {
+  message?: string;
+  error?: {
+    code?: string;
+    message?: string;
+    step?: string;
   };
 };
 
@@ -141,6 +152,7 @@ type SearchResult = {
   status: string;
   created_at?: string | null;
   description?: string | null;
+  indexing_required?: boolean;
   matched_chunks: Array<{ chunk_index: number; content_preview: string; match_type: string }>;
 };
 
@@ -154,6 +166,24 @@ type UploadMetadata = {
 
 function getStatusTone(status: string) {
   return statusTone[status as keyof typeof statusTone] ?? "neutral";
+}
+
+function getStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    uploaded: "인덱싱 필요",
+    indexing: "인덱싱 중",
+    indexed: "인덱싱 완료",
+    failed: "인덱싱 실패",
+    Uploaded: "업로드됨",
+    Pending: "대기",
+    Processing: "처리 중",
+    Indexed: "인덱싱 완료",
+    Failed: "실패",
+    Reprocessing: "재처리 중",
+    Deleted: "삭제됨"
+  };
+
+  return labels[status] ?? status;
 }
 
 function getFileExtension(fileName: string) {
@@ -195,23 +225,56 @@ function getNetworkError(error: unknown) {
   };
 }
 
+function getApiErrorMessage(data: unknown, fallback: string) {
+  const response = data as ApiErrorResponse | null;
+  const message = response?.error?.message || response?.message || fallback;
+  const code = response?.error?.code;
+
+  return code ? `${message} (${code})` : message;
+}
+
 function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function uniqueStrings(values: unknown[]) {
+  return Array.from(new Set(values.filter(isNonEmptyString)));
+}
+
+async function loadDocumentFilterOptions() {
+  const client = supabase as any;
+
+  if (!client) {
+    return defaultFilterOptions;
+  }
+
+  const { data } = await client
+    .from("documents")
+    .select("category,document_type,tags,status");
+
+  const rows = (data ?? []) as any[];
+
+  return {
+    categories: uniqueStrings(rows.map((item) => item.category)),
+    documentTypes: uniqueStrings(rows.map((item) => item.document_type)),
+    tags: uniqueStrings(rows.flatMap((item) => (Array.isArray(item.tags) ? item.tags : []))),
+    statuses: uniqueStrings(rows.map((item) => item.status))
+  };
+}
+
 const nav = [
-  { id: "dashboard", label: "메인 챗봇", icon: LayoutDashboard },
-  { id: "ask", label: "Q&A", icon: MessageSquareText },
-  { id: "search", label: "업무 검색", icon: Search },
+  { id: "dashboard", label: "홈", icon: LayoutDashboard },
+  { id: "ask", label: "문서 Q&A", icon: MessageSquareText },
+  { id: "search", label: "문서/업무 검색", icon: Search },
   { id: "documents", label: "문서 관리", icon: FileText },
   { id: "project", label: "프로젝트", icon: History },
   { id: "admin", label: "관리자", icon: ShieldCheck }
 ];
 
 const quickActions: Array<{ page: string; icon: LucideIcon; label: string }> = [
-  { page: "ask", icon: MessageSquareText, label: "질문하기" },
-  { page: "documents", icon: Upload, label: "문서 업로드" },
-  { page: "search", icon: FileSearch, label: "히스토리 검색" },
+  { page: "ask", icon: MessageSquareText, label: "문서 기반 질문하기" },
+  { page: "documents", icon: Upload, label: "문서 등록" },
+  { page: "search", icon: FileSearch, label: "문서/업무 검색" },
   { page: "admin", icon: ShieldCheck, label: "인덱싱 상태" },
   { page: "project", icon: History, label: "프로젝트 보기" }
 ];
@@ -229,6 +292,8 @@ export default function HomePage() {
   const [projectRows, setProjectRows] = useState<SupabaseProject[]>([]);
   const [recentChatLogs, setRecentChatLogs] = useState<ChatLog[]>([]);
   const [selectedChatLog, setSelectedChatLog] = useState<ChatLog | null>(null);
+  const [questionResetToken, setQuestionResetToken] = useState(0);
+  const [documentMetadataVersion, setDocumentMetadataVersion] = useState(0);
 
   useEffect(() => {
     if (!isLoggedIn) {
@@ -290,6 +355,18 @@ export default function HomePage() {
     setActivePage("ask");
   }
 
+  function startNewQuestionSession() {
+    setQuestion("");
+    setSelectedChatLog(null);
+    setQuestionResetToken((current) => current + 1);
+    setActivePage("ask");
+  }
+
+  async function handleDocumentMetadataChanged() {
+    setDocumentMetadataVersion((current) => current + 1);
+    await loadProjects();
+  }
+
   if (!isLoggedIn) {
     return <LoginPage loginError={loginError} onLogin={handleLogin} />;
   }
@@ -310,11 +387,11 @@ export default function HomePage() {
           </div>
           <button
             type="button"
-            onClick={() => setActivePage("dashboard")}
+            onClick={startNewQuestionSession}
             className="mb-6 flex h-12 w-full items-center justify-center gap-2 rounded-md border border-[#f37321] bg-white text-sm font-bold text-[#f37321] transition hover:bg-orange-50"
           >
             <PlusCircle size={18} aria-hidden />
-            New Chat
+            새 질문 시작
           </button>
           <nav className="space-y-1">
             {nav.map((item) => {
@@ -361,7 +438,7 @@ export default function HomePage() {
         </aside>
 
         <section className="px-5 py-6 lg:px-8">
-          <AppHeader setActivePage={setActivePage} />
+          <AppHeader setActivePage={setActivePage} onStartQuestion={startNewQuestionSession} />
           {activePage === "dashboard" && (
             <Dashboard
               question={question}
@@ -383,9 +460,11 @@ export default function HomePage() {
               setTypeFilter={setTypeFilter}
               projects={projectRows}
               historyLog={selectedChatLog}
-              onNewQuestion={() => setSelectedChatLog(null)}
+              onNewQuestion={startNewQuestionSession}
               onRefreshHistory={loadRecentChatLogs}
               tagFilter={tagFilter}
+              resetToken={questionResetToken}
+              documentMetadataVersion={documentMetadataVersion}
             />
           )}
           {activePage === "search" && (
@@ -403,9 +482,11 @@ export default function HomePage() {
               typeFilter={typeFilter}
               setQuestion={setQuestion}
               setActivePage={setActivePage}
+              documentMetadataVersion={documentMetadataVersion}
+              onStartQuestion={startNewQuestionSession}
             />
           )}
-          {activePage === "documents" && <DocumentsPage projects={projectRows} onProjectsChanged={loadProjects} />}
+          {activePage === "documents" && <DocumentsPage projects={projectRows} onProjectsChanged={handleDocumentMetadataChanged} />}
           {activePage === "project" && <ProjectPage projects={projectRows} onProjectsChanged={loadProjects} />}
           {activePage === "admin" && <AdminPage projects={projectRows} />}
         </section>
@@ -428,7 +509,7 @@ function LoginPage({ loginError, onLogin }: { loginError: string; onLogin: (form
             계약서, 회의록, 결정사항, 운영 이력을 업로드하고 질문하면 관련 문서와 출처를 함께 확인할 수 있는 사내 업무 지식베이스 MVP입니다.
           </p>
           <div className="mt-8 grid gap-3 sm:grid-cols-3">
-            {["문서 업로드", "자연어 Q&A", "출처 검증"].map((item) => (
+            {["문서 등록", "문서 Q&A", "출처 검증"].map((item) => (
               <div key={item} className="rounded-md border border-line bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-panel">
                 {item}
               </div>
@@ -483,7 +564,7 @@ function HanwhaMark() {
   );
 }
 
-function AppHeader({ setActivePage }: { setActivePage: (page: string) => void }) {
+function AppHeader({ onStartQuestion, setActivePage }: { onStartQuestion: () => void; setActivePage: (page: string) => void }) {
   return (
     <header className="mb-4 flex flex-col justify-between gap-4 md:flex-row md:items-center">
       <div>
@@ -493,11 +574,17 @@ function AppHeader({ setActivePage }: { setActivePage: (page: string) => void })
       <div className="flex gap-2">
         <button type="button" onClick={() => setActivePage("documents")} className="flex h-10 items-center gap-2 rounded-md border border-line bg-white px-3 text-sm font-semibold text-slate-700">
           <Upload size={17} aria-hidden />
-          업로드
+          문서 등록
         </button>
-        <button type="button" onClick={() => setActivePage("dashboard")} className="flex h-10 items-center gap-2 rounded-md bg-[#f37321] px-3 text-sm font-semibold text-white">
+        <button
+          type="button"
+          onClick={onStartQuestion}
+          aria-label="업로드 및 인덱싱된 문서를 기준으로 질문합니다."
+          title="업로드 및 인덱싱된 문서를 기준으로 질문합니다."
+          className="flex h-10 items-center gap-2 rounded-md bg-[#f37321] px-3 text-sm font-semibold text-white"
+        >
           <MessageSquareText size={17} aria-hidden />
-          질문하기
+          문서 기반 질문하기
         </button>
       </div>
     </header>
@@ -522,8 +609,8 @@ function Dashboard({
           <div className="mx-auto w-full flex-1 pt-8">
             <div className="text-center">
               <Badge tone="amber">Recommendation</Badge>
-              <h2 className="mt-3 text-2xl font-bold text-ink">어떤 업무를 도와드릴까요?</h2>
-              <p className="mt-2 text-sm text-slate-500">계약서, 회의록, 결정사항, 운영 이력을 기반으로 답변합니다.</p>
+              <h2 className="mt-3 text-2xl font-bold text-ink">홈에서 업무 흐름을 시작하세요</h2>
+              <p className="mt-2 text-sm text-slate-500">프로젝트 생성, 문서 등록, 인덱싱, 문서 Q&A, 최근 히스토리 확인까지 이어집니다.</p>
             </div>
             <div className="mx-auto mt-8 grid w-full max-w-[860px] gap-4 md:grid-cols-3">
               {[
@@ -544,7 +631,7 @@ function Dashboard({
                 value={question}
                 onChange={(event) => setQuestion(event.target.value)}
                 className="min-h-16 w-full resize-none border-0 bg-white p-2 text-base outline-none"
-                placeholder="What task can I help you with?"
+                placeholder="업로드 및 인덱싱된 문서에 질문할 내용을 입력하세요."
               />
               <div className="flex items-center justify-between">
                 <div className="flex gap-2">
@@ -555,7 +642,7 @@ function Dashboard({
                     <Search size={18} aria-hidden />
                   </button>
                 </div>
-                <button type="button" onClick={() => setActivePage("ask")} className="flex h-11 w-11 items-center justify-center rounded-md bg-[#f37321] text-white">
+                <button type="button" onClick={() => setActivePage("ask")} title="문서 Q&A로 이동" className="flex h-11 w-11 items-center justify-center rounded-md bg-[#f37321] text-white">
                   <CircleArrowRight size={24} aria-hidden />
                 </button>
               </div>
@@ -582,8 +669,10 @@ function AskPage(props: {
   onNewQuestion: () => void;
   onRefreshHistory: () => Promise<void> | void;
   tagFilter: string;
+  resetToken: number;
+  documentMetadataVersion: number;
 }) {
-  const { categoryFilter, historyLog, onNewQuestion, onRefreshHistory, projectFilter, projects, question, setCategoryFilter, setProjectFilter, setQuestion, setTagFilter, setTypeFilter, tagFilter, typeFilter } = props;
+  const { categoryFilter, documentMetadataVersion, historyLog, onNewQuestion, onRefreshHistory, projectFilter, projects, question, resetToken, setCategoryFilter, setProjectFilter, setQuestion, setTagFilter, setTypeFilter, tagFilter, typeFilter } = props;
   const [answer, setAnswer] = useState("");
   const [sources, setSources] = useState<ChatSource[]>([]);
   const [isAsking, setIsAsking] = useState(false);
@@ -599,52 +688,30 @@ function AskPage(props: {
 
     setAnswer(historyLog.answer);
     setSources((historyLog.sources ?? []) as ChatSource[]);
+    setAskError("");
+    setDiagnostics(null);
   }, [historyLog]);
 
   useEffect(() => {
+    setAnswer("");
+    setSources([]);
+    setAskError("");
+    setDiagnostics(null);
+  }, [resetToken]);
+
+  useEffect(() => {
     async function loadFilterOptions() {
-      const client = supabase as any;
-
-      if (!client) {
-        setFilterOptions({ categories: documentCategories, documentTypes, tags: [] });
-        return;
-      }
-
-      const { data } = await client
-        .from("documents")
-        .select("category,document_type,tags")
-        .not("status", "eq", "failed");
-      const categories: string[] = Array.from(
-        new Set(
-          (data ?? [])
-            .map((item: any) => item.category)
-            .filter(isNonEmptyString)
-        )
-      );
-      const types: string[] = Array.from(
-        new Set(
-          (data ?? [])
-            .map((item: any) => item.document_type)
-            .filter(isNonEmptyString)
-        )
-      );
-      const dynamicTags: string[] = Array.from(
-        new Set(
-          (data ?? [])
-            .flatMap((item: any) => (Array.isArray(item.tags) ? item.tags : []))
-            .filter(isNonEmptyString)
-        )
-      );
+      const options = await loadDocumentFilterOptions();
 
       setFilterOptions({
-        categories: categories.length > 0 ? categories : documentCategories,
-        documentTypes: types.length > 0 ? types : documentTypes,
-        tags: dynamicTags
+        categories: options.categories.length > 0 ? options.categories : documentCategories,
+        documentTypes: options.documentTypes.length > 0 ? options.documentTypes : documentTypes,
+        tags: options.tags
       });
     }
 
     void loadFilterOptions();
-  }, []);
+  }, [documentMetadataVersion]);
 
   async function askQuestion() {
     const normalizedQuestion = question.trim();
@@ -690,7 +757,7 @@ function AskPage(props: {
       }
 
       if (!response.ok || !responseData.ok) {
-        throw new Error(responseData.message ?? "질문 처리에 실패했습니다.");
+        throw new Error(getApiErrorMessage(responseData, "질문 처리에 실패했습니다."));
       }
 
       setAnswer(responseData.answer ?? "등록된 문서에서 확인되지 않습니다.");
@@ -707,7 +774,7 @@ function AskPage(props: {
   return (
     <div className="grid gap-5 xl:grid-cols-[1fr_360px]">
       <Panel>
-        <SectionHeader title="자연어 Q&A" action={<Badge tone="amber">출처 기반 답변</Badge>} />
+        <SectionHeader title="문서 Q&A" action={<Badge tone="amber">출처 기반 답변</Badge>} />
         <div className="space-y-4 p-5">
           <PageIntro
             title="질문하면 관련 문서와 근거를 함께 보여줍니다"
@@ -750,12 +817,11 @@ function AskPage(props: {
             className="flex h-11 items-center gap-2 rounded-md bg-ocean px-4 font-semibold text-white disabled:cursor-not-allowed disabled:bg-slate-400"
           >
             <MessageSquareText size={18} aria-hidden />
-            {isAsking ? "답변 생성 중" : "질문하기"}
+            {isAsking ? "답변 생성 중" : "문서 기반 질문하기"}
           </button>
           {historyLog && (
             <div className="flex gap-2">
-              <button type="button" onClick={onNewQuestion} className="rounded-md border border-line px-3 py-2 text-sm font-semibold text-slate-700">새 질문하기</button>
-              <button type="button" onClick={() => { onNewQuestion(); void askQuestion(); }} className="rounded-md bg-ocean px-3 py-2 text-sm font-semibold text-white">이 질문 다시 실행</button>
+              <button type="button" onClick={onNewQuestion} className="rounded-md border border-line px-3 py-2 text-sm font-semibold text-slate-700">새 질문 시작</button>
             </div>
           )}
           {askError && <p className="rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{askError}</p>}
@@ -833,11 +899,30 @@ function SearchPage(props: {
   setActivePage: (value: string) => void;
   tagFilter: string;
   typeFilter: string;
+  documentMetadataVersion: number;
+  onStartQuestion: () => void;
 }) {
   const [results, setResults] = useState<SearchResult[]>([]);
   const [isSearching, setIsSearching] = useState(false);
   const [message, setMessage] = useState("");
+  const [statusFilter, setStatusFilter] = useState("");
+  const [filterOptions, setFilterOptions] = useState(defaultFilterOptions);
   const selectedProject = props.projects.find((project) => project.id === props.projectFilter);
+
+  useEffect(() => {
+    async function refreshFilters() {
+      const options = await loadDocumentFilterOptions();
+
+      setFilterOptions({
+        categories: options.categories.length > 0 ? options.categories : documentCategories,
+        documentTypes: options.documentTypes.length > 0 ? options.documentTypes : documentTypes,
+        tags: options.tags,
+        statuses: options.statuses
+      });
+    }
+
+    void refreshFilters();
+  }, [props.documentMetadataVersion]);
 
   async function runSearch() {
     setIsSearching(true);
@@ -855,19 +940,20 @@ function SearchPage(props: {
           project_name: selectedProject?.name ?? null,
           category: props.categoryFilter || null,
           document_type: props.typeFilter || null,
-          tag: props.tagFilter || null
+          tag: props.tagFilter || null,
+          status: statusFilter || null
         })
       });
       const data = await response.json();
 
       if (!response.ok || !data.ok) {
-        throw new Error(data.message ?? "검색에 실패했습니다.");
+        throw new Error(getApiErrorMessage(data, "검색에 실패했습니다."));
       }
 
       setResults(data.results ?? []);
 
       if ((data.results ?? []).length === 0) {
-        setMessage("검색어와 일치하는 업로드 문서가 없습니다. 선택한 필터를 해제하거나 문서를 인덱싱한 뒤 다시 검색해보세요.");
+        setMessage("현재 필터에 해당하는 인덱싱 완료 문서가 없거나, 분류가 수정되었지만 아직 재인덱싱되지 않았습니다. 업무검색은 업로드 문서명과 인덱싱된 본문을 기준으로 검색합니다.");
       }
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error));
@@ -878,11 +964,11 @@ function SearchPage(props: {
 
   return (
     <Panel>
-      <SectionHeader title="업무 검색" action={<Badge tone="blue">문서 + chunk 검색</Badge>} />
+      <SectionHeader title="문서/업무 검색" action={<Badge tone="blue">문서 metadata + chunk 검색</Badge>} />
       <div className="space-y-4 p-5">
         <PageIntro
           title="업로드된 문서와 근거 chunk를 찾습니다"
-          description="Q&A는 답변 생성 화면이고, 업무 검색은 문서와 매칭 chunk를 직접 확인하는 화면입니다."
+          description="문서/업무 검색은 최신 documents metadata와 인덱싱된 본문 chunk를 함께 확인하는 화면입니다."
         />
         <div className="flex flex-col gap-3 lg:flex-row">
           <input value={props.searchQuery} onChange={(event) => props.setSearchQuery(event.target.value)} placeholder="프로젝트, 계약 조건, 결정사항 검색" className="h-11 flex-1 rounded-md border border-line bg-field px-3" />
@@ -895,10 +981,20 @@ function SearchPage(props: {
           setCategoryFilter={props.setCategoryFilter}
           typeFilter={props.typeFilter}
           setTypeFilter={props.setTypeFilter}
-          tagFilter={props.tagFilter}
-          setTagFilter={props.setTagFilter}
-          projects={props.projects}
-        />
+            tagFilter={props.tagFilter}
+            setTagFilter={props.setTagFilter}
+            projects={props.projects}
+            categories={filterOptions.categories}
+            documentTypes={filterOptions.documentTypes}
+            tags={filterOptions.tags}
+          />
+        <div className="grid gap-3 rounded-md border border-line bg-white p-3 md:grid-cols-[1fr_2fr]">
+          <span className="flex items-center text-sm font-semibold text-slate-600">인덱싱 상태</span>
+          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)} className="h-10 rounded-md border border-line bg-field px-3 text-sm">
+            <option value="">전체 상태</option>
+            {(filterOptions.statuses.length > 0 ? filterOptions.statuses : ["uploaded", "indexed", "failed"]).map((status) => <option key={status} value={status}>{getStatusLabel(status)}</option>)}
+          </select>
+        </div>
         {message && <p className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-800">{message}</p>}
         <div className="space-y-3">
           {results.map((document) => (
@@ -909,7 +1005,7 @@ function SearchPage(props: {
                   <p className="mt-1 break-all text-xs text-slate-500">{document.file_path}</p>
                   {document.description && <p className="mt-2 text-sm leading-6 text-slate-600">{document.description}</p>}
                 </div>
-                <Badge tone={getStatusTone(document.status)}>{document.status}</Badge>
+                <Badge tone={getStatusTone(document.status)}>{getStatusLabel(document.status)}</Badge>
               </div>
               <div className="mt-3 flex flex-wrap gap-1">
                 <Badge tone={document.project_name ? "blue" : "neutral"}>{document.project_name ?? "미분류"}</Badge>
@@ -917,7 +1013,7 @@ function SearchPage(props: {
                 {document.document_type && <Badge>{document.document_type}</Badge>}
                 {(document.tags ?? []).map((tag) => <Badge key={tag}>{tag}</Badge>)}
               </div>
-              {document.status !== "indexed" && <p className="mt-3 rounded-md bg-field p-3 text-sm text-slate-600">아직 인덱싱되지 않아 본문 검색은 불가능합니다. 인덱싱 후 검색 정확도가 높아집니다.</p>}
+              {document.indexing_required && <p className="mt-3 rounded-md bg-field p-3 text-sm text-slate-600">분류가 수정되었거나 아직 인덱싱되지 않았습니다. 관리자 화면에서 인덱싱을 실행하면 최신 분류가 chunk metadata에 반영됩니다.</p>}
               {document.matched_chunks.length > 0 && (
                 <div className="mt-3 space-y-2">
                   {document.matched_chunks.map((chunk) => (
@@ -931,13 +1027,14 @@ function SearchPage(props: {
               <button
                 type="button"
                 onClick={() => {
+                  props.onStartQuestion();
                   props.setQuestion(`${document.title} 기준으로 핵심 내용을 알려줘`);
                   props.setProjectFilter(document.project_id ?? "");
                   props.setActivePage("ask");
                 }}
                 className="mt-3 rounded-md border border-line px-3 py-2 text-xs font-semibold text-slate-700"
               >
-                이 문서 기준으로 질문하기
+                이 문서 기준으로 문서 Q&A
               </button>
             </article>
           ))}
@@ -1134,7 +1231,7 @@ function DocumentsPage({ projects, onProjectsChanged }: { projects: SupabaseProj
           registerStarted: true,
           registerErrorJson: registerData.registerErrorJson
         }));
-        setError(registerData.message || "문서 metadata 저장에 실패했습니다.");
+        setError(getApiErrorMessage(registerData, "문서 metadata 저장에 실패했습니다."));
         setIsUploading(false);
         return;
       }
@@ -1243,7 +1340,9 @@ function DocumentsPage({ projects, onProjectsChanged }: { projects: SupabaseProj
           onClose={() => setEditingDocument(null)}
           onSaved={async () => {
             setEditingDocument(null);
+            setMessage("문서 분류가 저장되었습니다. 분류 변경으로 재인덱싱이 필요합니다.");
             await loadDocuments();
+            await onProjectsChanged();
           }}
         />
       )}
@@ -1266,7 +1365,7 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
     category: projectCategories[0],
     tags: "",
     objective: "",
-    owner: "",
+    owner: defaultOwner,
     start_date: "",
     end_date: "",
     memo: "",
@@ -1351,7 +1450,7 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
       category: project.category ?? projectCategories[0],
       tags: (project.tags ?? []).join(", "),
       objective: project.objective ?? "",
-      owner: project.owner ?? "",
+      owner: project.owner ?? defaultOwner,
       start_date: project.start_date ?? "",
       end_date: project.end_date ?? "",
       memo: project.memo ?? "",
@@ -1382,7 +1481,7 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
       const data = await response.json();
 
       if (!response.ok || !data.ok) {
-        throw new Error(data.message ?? "프로젝트 저장에 실패했습니다.");
+        throw new Error(getApiErrorMessage(data, "프로젝트 저장에 실패했습니다. 담당자/담당부서 값을 확인해주세요."));
       }
 
       setSelectedProject(data.project);
@@ -1400,7 +1499,7 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
         <SectionHeader title="프로젝트 목록" action={<button type="button" onClick={() => {
           setSelectedProject(null);
           setEditingProjectId("");
-          setForm({ name: "", description: "", status: "진행", category: projectCategories[0], tags: "", objective: "", owner: "", start_date: "", end_date: "", memo: "", decisions: "", timeline: "" });
+          setForm({ name: "", description: "", status: "진행", category: projectCategories[0], tags: "", objective: "", owner: defaultOwner, start_date: "", end_date: "", memo: "", decisions: "", timeline: "" });
           setShowForm(true);
         }} className="rounded-md bg-ocean px-3 py-2 text-xs font-semibold text-white">새 프로젝트 만들기</button>} />
         <div className="space-y-4 p-5">
@@ -1423,7 +1522,10 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
                 {projectCategories.map((category) => <option key={category}>{category}</option>)}
               </select>
               <input value={form.tags} onChange={(event) => setForm((current) => ({ ...current, tags: event.target.value }))} placeholder="태그" className="h-10 rounded-md border border-line bg-field px-3" />
-              <input value={form.owner} onChange={(event) => setForm((current) => ({ ...current, owner: event.target.value }))} placeholder="담당 부서/담당자" className="h-10 rounded-md border border-line bg-field px-3" />
+              <label className="text-sm font-semibold text-slate-700">
+                담당자/담당부서
+                <input value={form.owner} onChange={(event) => setForm((current) => ({ ...current, owner: event.target.value }))} placeholder={defaultOwner} className="mt-2 h-10 w-full rounded-md border border-line bg-field px-3 font-normal" />
+              </label>
               <input value={form.objective} onChange={(event) => setForm((current) => ({ ...current, objective: event.target.value }))} placeholder="주요 목적" className="h-10 rounded-md border border-line bg-field px-3" />
               <input type="date" value={form.start_date} onChange={(event) => setForm((current) => ({ ...current, start_date: event.target.value }))} className="h-10 rounded-md border border-line bg-field px-3" />
               <input type="date" value={form.end_date} onChange={(event) => setForm((current) => ({ ...current, end_date: event.target.value }))} className="h-10 rounded-md border border-line bg-field px-3" />
@@ -1452,7 +1554,7 @@ function ProjectPage({ projects, onProjectsChanged }: { projects: SupabaseProjec
                 {documentsForProject.map((document) => (
                   <div key={document.id} className="rounded-md border border-line bg-field p-3">
                     <p className="font-semibold text-ink">{document.title}</p>
-                    <p className="mt-1 text-xs text-slate-500">{document.category ?? "-"} · {document.document_type ?? "-"} · {document.status}</p>
+                    <p className="mt-1 text-xs text-slate-500">{document.category ?? "-"} · {document.document_type ?? "-"} · {getStatusLabel(document.status)}</p>
                   </div>
                 ))}
               </ProjectRelatedSection>
@@ -1505,7 +1607,7 @@ function ProjectListItem({
       </div>
       <div className="mt-3 grid grid-cols-3 gap-2 text-xs text-slate-600">
         <span>문서 {counts.documentCount}</span>
-        <span>indexed {counts.indexedCount}</span>
+        <span>완료 {counts.indexedCount}</span>
         <span>질문 {counts.recentQuestionCount}</span>
       </div>
       <p className="mt-3 text-xs text-slate-500">생성 {project.created_at ? formatDateTime(project.created_at) : "-"} · 수정 {project.updated_at ? formatDateTime(project.updated_at) : "-"}</p>
@@ -1590,7 +1692,7 @@ function AdminPage({ projects }: { projects: SupabaseProject[] }) {
       const responseData = await response.json();
 
       if (!response.ok || !responseData.ok) {
-        throw new Error(responseData.message ?? "인덱싱 실행에 실패했습니다.");
+        throw new Error(getApiErrorMessage(responseData, "인덱싱 실행에 실패했습니다."));
       }
 
       const result = responseData.results?.[0];
@@ -1616,7 +1718,7 @@ function AdminPage({ projects }: { projects: SupabaseProject[] }) {
         <div className="p-5 pb-0">
           <PageIntro
             title="문서 인덱싱 운영 콘솔"
-            description="uploaded 상태 문서를 텍스트로 추출하고 chunk, embedding을 생성해 document_chunks 테이블에 저장합니다."
+            description="인덱싱 필요 상태 문서를 텍스트로 추출하고 chunk, embedding을 생성해 document_chunks 테이블에 저장합니다."
           />
           {message && <p className="mt-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-700">{message}</p>}
           {error && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
@@ -1850,7 +1952,7 @@ function SupabaseDocumentTable({
               <td className="px-5 py-4">{formatDateTime(document.created_at)}</td>
               <td className="px-5 py-4">
                 <div className="space-y-1">
-                  <Badge tone={getStatusTone(document.status)}>{document.status}</Badge>
+                  <Badge tone={getStatusTone(document.status)}>{getStatusLabel(document.status)}</Badge>
                   {document.error_message && <p className="max-w-[260px] text-xs leading-5 text-rose-600">{document.error_message}</p>}
                 </div>
               </td>
@@ -1920,7 +2022,7 @@ function DocumentClassificationEditor({
     const data = await response.json();
 
     if (!response.ok || !data.ok) {
-      setError(data.message ?? "문서 분류 저장에 실패했습니다.");
+      setError(getApiErrorMessage(data, "문서 분류 저장에 실패했습니다."));
       return;
     }
 
@@ -1948,7 +2050,7 @@ function DocumentClassificationEditor({
           <input value={form.tags} onChange={(event) => setForm((current) => ({ ...current, tags: event.target.value }))} className="h-10 rounded-md border border-line bg-field px-3" placeholder="태그" />
           <textarea value={form.description} onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))} className="min-h-24 rounded-md border border-line bg-field p-3 md:col-span-2" placeholder="설명" />
         </div>
-        <p className="mt-3 text-sm text-amber-700">저장하면 status가 uploaded로 변경되어 재인덱싱이 필요합니다.</p>
+        <p className="mt-3 text-sm text-amber-700">저장하면 상태가 인덱싱 필요로 변경되어 재인덱싱이 필요합니다.</p>
         {error && <p className="mt-3 rounded-md border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">{error}</p>}
         <button type="button" onClick={() => void save()} className="mt-4 rounded-md bg-ocean px-4 py-2 text-sm font-semibold text-white">저장</button>
       </div>
@@ -1981,7 +2083,7 @@ function DocumentTable({ compact = false }: { compact?: boolean }) {
               {!compact && <td className="px-5 py-4"><div className="flex flex-wrap gap-1">{document.tagIds.map((tagId) => <Badge key={tagId}>{tags.find((tag) => tag.id === tagId)?.name}</Badge>)}</div></td>}
               <td className="px-5 py-4">{document.uploader}</td>
               <td className="px-5 py-4">{document.uploadedAt}</td>
-              <td className="px-5 py-4"><Badge tone={getStatusTone(document.status)}>{document.status}</Badge></td>
+              <td className="px-5 py-4"><Badge tone={getStatusTone(document.status)}>{getStatusLabel(document.status)}</Badge></td>
               {!compact && <td className="px-5 py-4">{document.status === "Failed" ? <button className="rounded-md border border-line px-3 py-2 text-xs font-semibold">재시도</button> : <button className="rounded-md border border-line px-3 py-2 text-xs font-semibold">상세</button>}</td>}
             </tr>
           ))}
