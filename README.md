@@ -23,10 +23,23 @@ Next.js, TypeScript, Tailwind CSS 기반의 사내 업무 히스토리 조회 MV
 - `app/api/documents/[id]/route.ts`: 문서 프로젝트/카테고리/태그 분류 수정 API
 - `app/api/documents/index/route.ts`: 문서 텍스트 추출, chunking, OpenAI embedding, Supabase 저장 API
 - `app/globals.css`: Tailwind 및 전역 스타일
-- `components/home-page.tsx`: 전체 MVP 화면과 클라이언트 상태
+- `components/home-page.tsx`: 기존 Supabase/RAG 기능을 연결하는 클라이언트 상태 컨테이너
+- `components/layout/AppLayout.tsx`: 좌측 사이드바, 상단 헤더, 메인 콘텐츠를 묶는 앱 레이아웃
+- `components/layout/Sidebar.tsx`: 홈, 문서 Q&A, 문서/업무 검색, 프로젝트, 문서 관리, 관리자 메뉴
+- `components/layout/Header.tsx`: 서비스명, 현재 화면명, 사용자 프로필 placeholder
+- `components/chat/ChatbotPanel.tsx`: 첫 화면의 챗봇 중심 Q&A 패널
+- `components/chat/ChatMessage.tsx`: 채팅 메시지 bubble
+- `components/history/RecentHistoryList.tsx`: 최근 질문/답변 히스토리 목록
+- `components/history/HistoryDetailPanel.tsx`: 질문/답변/필터/출처 상세 패널
+- `components/documents/DocumentUploadCard.tsx`: 문서 업로드 UI 구조
+- `components/documents/DocumentTable.tsx`: 문서 목록, 상태, 작업 버튼 테이블
+- `components/projects/ProjectHistoryTable.tsx`: 프로젝트 및 업무 히스토리 테이블
+- `components/search/WorkSearchPanel.tsx`: 문서/업무 검색 입력과 결과 카드
+- `components/admin/AdminStatsCards.tsx`: 관리자 통계 카드
 - `components/ui.tsx`: 공통 패널, 배지, 섹션 헤더
 - `lib/supabase.ts`: Supabase client 설정
-- `lib/types.ts`: 향후 백엔드와 맞출 데이터 모델
+- `lib/types.ts`: 화면 분리와 백엔드 연결에 공통으로 쓰는 데이터 모델
+- `lib/ui-format.ts`: 상태 badge, 날짜 표시 등 UI 포맷 유틸
 - `lib/mock-data.ts`: 샘플 문서, 프로젝트, 태그, 인덱싱 작업
 - `lib/rag-service.ts`: mock 검색 및 Q&A 서비스 계층
 - `DEPLOYMENT.md`: Supabase/Vercel 상용화 체크리스트
