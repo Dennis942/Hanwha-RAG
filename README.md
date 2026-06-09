@@ -5,10 +5,10 @@ Next.js, TypeScript, Tailwind CSS 기반의 사내 업무 히스토리 조회 MV
 ## 포함 화면
 
 - 로그인
-- 챗봇형 메인 화면 및 기능 바로가기
+- 홈 화면 및 기능 바로가기
 - 문서 업로드 및 문서 목록
-- 업무 히스토리 검색
-- 자연어 Q&A 및 출처 표시
+- 문서/업무 검색
+- 문서 Q&A 및 출처 표시
 - 프로젝트 상세
 - 관리자 인덱싱 상태
 
@@ -61,6 +61,7 @@ npm run dev
 5. 파일은 20MB 이하의 PDF, TXT, DOCX만 허용합니다. 브라우저가 Supabase Storage `documents` bucket에 직접 업로드하고, Storage 경로는 원본 파일명 대신 `uploads/{uuid}.{ext}` 형식으로 저장합니다. 업로드 성공 후 `/api/documents/register` API 라우트가 원본 파일명, Storage path, 파일 유형, 파일 크기를 `documents` 테이블에 저장합니다.
 6. `documents` Storage bucket은 private으로 유지합니다. 현재 SQL은 anon 업로드 정책만 두고 anon 파일 읽기 정책은 생성하지 않습니다. 인덱싱 API는 서버의 `SUPABASE_SECRET_KEY` 또는 `SUPABASE_SERVICE_ROLE_KEY`로 Storage 파일을 다운로드합니다.
 7. `documents.status`는 `uploaded`, `indexing`, `indexed`, `failed`만 허용하고, `document_chunks`는 `(document_id, chunk_index)`가 중복되지 않도록 관리합니다.
+8. `projects.owner`는 기본값이 `미지정`입니다. 프로젝트 생성 UI/API도 담당자/담당부서 값이 비어 있으면 `미지정`으로 저장해 `not null` 제약에 걸리지 않도록 방어합니다.
 
 ## Vercel 환경변수
 
@@ -100,19 +101,25 @@ API Route는 실패 시 아래 형태를 공통으로 반환합니다. 화면은
 ## 통합 업무 흐름
 
 - 프로젝트는 업무 폴더 역할을 하며 이름, 설명, 상태, 카테고리, 태그, 목적, 담당자, 기간, 메모, 결정사항, 타임라인을 저장합니다.
+- `새 질문 시작`은 기존 질문 입력, 히스토리 상세, 답변, 출처 패널을 초기화하고 문서 Q&A의 새 질문 모드로 이동합니다.
+- 홈은 기본 진입 화면이며, 문서 Q&A는 업로드 및 인덱싱된 문서를 근거로 질문하는 화면입니다. 최근 업무 히스토리는 기존 질문/답변을 다시 확인하는 읽기 화면입니다.
 - 문서 업로드 시 프로젝트, 업무 카테고리, 문서 유형, 태그, 설명을 함께 지정하고 `documents` metadata로 저장합니다.
+- 문서 관리에서 프로젝트/카테고리/문서 유형/태그/설명을 수정하면 `documents.status`를 `uploaded`로 되돌려 재인덱싱을 유도합니다.
 - 인덱싱 시 `document_chunks.metadata`에는 문서명, file path, 프로젝트, 카테고리, 문서 유형, 태그, chunk 번호, embedding model이 함께 저장됩니다.
 - Q&A 필터의 프로젝트/카테고리/문서 유형/태그는 `match_document_chunks` 검색 조건으로 전달됩니다.
 - 왼쪽 최근 업무 히스토리는 `chat_logs` 기반으로 최근 질문, 일시, 출처 수, 프로젝트명을 보여주며 클릭 시 저장된 질문/답변 상세를 표시합니다.
-- 업무 검색은 답변 생성이 아니라 업로드 문서와 매칭 chunk를 찾는 화면입니다. Q&A는 검색된 chunk를 context로 사용해 문서 근거 안에서만 답변합니다.
+- 문서/업무 검색은 답변 생성이 아니라 최신 `documents` metadata와 매칭 chunk를 찾는 화면입니다. 결과 카드에는 `documents` 테이블의 프로젝트, 카테고리, 문서 유형, 태그, 상태를 우선 표시합니다.
+- 분류 수정 후 업무검색 필터는 `documents` 테이블의 실제 distinct 값 기준으로 다시 구성됩니다. 본문 chunk metadata는 재인덱싱 후 최신 분류값으로 갱신됩니다.
 
 ## 운영 전 체크리스트
 
 - Vercel Production/Preview 환경에 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SECRET_KEY` 또는 `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`가 모두 등록되어 있는지 확인합니다.
 - Supabase SQL Editor에서 최신 `supabase-schema.sql`을 실행하고, 마지막 `notify pgrst, 'reload schema';`까지 성공했는지 확인합니다.
+- 프로젝트 생성 오류를 막기 위해 최신 SQL의 `projects.owner` 기본값 migration을 반드시 실행합니다.
 - Storage `documents` bucket이 private인지 확인하고, `storage.objects`에 anon select/read 정책이 남아 있지 않은지 확인합니다.
 - 브라우저 직접 업로드를 유지하는 동안 anon insert 정책은 `bucket_id = 'documents'` 및 `uploads/` 경로로 제한합니다.
 - Supabase Table Editor에서 `documents.file_path`, `documents.file_type`, `documents.status`, `documents.error_message`, `document_chunks.embedding`, `chat_logs.sources`, `chat_logs.filters` 컬럼이 있는지 확인합니다.
 - Vercel 배포 후 TXT, PDF, DOCX 각각으로 `업로드 -> documents 등록 -> 인덱싱 -> Q&A -> 업무검색` 흐름을 한 번씩 점검합니다.
+- 기존 indexed 문서의 분류를 수정한 경우 해당 문서는 다시 `uploaded` 상태가 되므로, 관리자 화면에서 재인덱싱을 실행해야 Q&A chunk metadata까지 최신화됩니다.
 - 인덱싱 실패 문서는 `documents.error_message`를 확인하고, 실패 원인이 OpenAI key, PDF 텍스트 추출, Storage 다운로드, schema cache 중 어디인지 분류합니다.
 - 내부 파일럿 전에는 service role 계정 사용 범위, RLS 정책, 업로드 가능한 사용자 범위를 다시 확정합니다.
