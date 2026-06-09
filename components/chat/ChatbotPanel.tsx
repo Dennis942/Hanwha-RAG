@@ -51,7 +51,7 @@ export function ChatbotPanel(props: {
                 <button type="button" onClick={props.onUploadClick} className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-field focus:outline-none focus:ring-2 focus:ring-ocean/30" title="문서 업로드" aria-label="문서 업로드">
                   <Upload size={18} aria-hidden />
                 </button>
-                <button type="button" onClick={props.onSearchClick} className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-field focus:outline-none focus:ring-2 focus:ring-ocean/30" title="문서·업무 검색" aria-label="문서·업무 검색">
+                <button type="button" onClick={props.onSearchClick} className="flex h-9 w-9 items-center justify-center rounded-md text-slate-500 hover:bg-field focus:outline-none focus:ring-2 focus:ring-ocean/30" title="문서 관리" aria-label="문서 관리">
                   <Search size={18} aria-hidden />
                 </button>
               </div>
@@ -65,4 +65,3 @@ export function ChatbotPanel(props: {
     </div>
   );
 }
-
