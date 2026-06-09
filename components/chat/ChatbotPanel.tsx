@@ -55,7 +55,7 @@ export function ChatbotPanel(props: {
                   <Search size={18} aria-hidden />
                 </button>
               </div>
-              <button type="button" onClick={props.onSubmitQuestion} title="문서 Q&A로 이동" aria-label="문서 Q&A로 이동" className="flex h-11 w-11 items-center justify-center rounded-md bg-[#f37321] text-white hover:bg-[#dd6415] focus:outline-none focus:ring-2 focus:ring-[#f37321]/40">
+              <button type="button" onClick={props.onSubmitQuestion} title="업무 질의로 이동" aria-label="업무 질의로 이동" className="flex h-11 w-11 items-center justify-center rounded-md bg-[#f37321] text-white hover:bg-[#dd6415] focus:outline-none focus:ring-2 focus:ring-[#f37321]/40">
                 <CircleArrowRight size={24} aria-hidden />
               </button>
             </div>
