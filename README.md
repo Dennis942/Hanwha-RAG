@@ -59,6 +59,8 @@ npm run dev
    - `status` = `uploaded`
    - `created_at`
 5. 파일은 20MB 이하의 PDF, TXT, DOCX만 허용합니다. 브라우저가 Supabase Storage `documents` bucket에 직접 업로드하고, Storage 경로는 원본 파일명 대신 `uploads/{uuid}.{ext}` 형식으로 저장합니다. 업로드 성공 후 `/api/documents/register` API 라우트가 원본 파일명, Storage path, 파일 유형, 파일 크기를 `documents` 테이블에 저장합니다.
+6. `documents` Storage bucket은 private으로 유지합니다. 현재 SQL은 anon 업로드 정책만 두고 anon 파일 읽기 정책은 생성하지 않습니다. 인덱싱 API는 서버의 `SUPABASE_SECRET_KEY` 또는 `SUPABASE_SERVICE_ROLE_KEY`로 Storage 파일을 다운로드합니다.
+7. `documents.status`는 `uploaded`, `indexing`, `indexed`, `failed`만 허용하고, `document_chunks`는 `(document_id, chunk_index)`가 중복되지 않도록 관리합니다.
 
 ## Vercel 환경변수
 
@@ -77,6 +79,24 @@ OPENAI_API_KEY=your-openai-api-key
 
 현재 구현은 문서 업로드, 인덱싱, 업로드 문서 기반 질문 답변까지 연결되어 있습니다. `/api/chat`은 질문 embedding을 생성하고 `match_document_chunks`로 상위 chunk 5개를 찾은 뒤, 등록된 문서 근거 안에서만 답변하고 `chat_logs`에 질문/답변/source를 저장합니다.
 
+## API 에러 응답
+
+API Route는 실패 시 아래 형태를 공통으로 반환합니다. 화면은 `message`와 `error.code`를 함께 읽어 사용자에게 원인을 표시합니다.
+
+```json
+{
+  "ok": false,
+  "message": "사용자에게 보여줄 오류 메시지",
+  "step": "실패 단계",
+  "error": {
+    "code": "machine_readable_error_code",
+    "message": "사용자에게 보여줄 오류 메시지",
+    "step": "실패 단계",
+    "details": {}
+  }
+}
+```
+
 ## 통합 업무 흐름
 
 - 프로젝트는 업무 폴더 역할을 하며 이름, 설명, 상태, 카테고리, 태그, 목적, 담당자, 기간, 메모, 결정사항, 타임라인을 저장합니다.
@@ -85,3 +105,14 @@ OPENAI_API_KEY=your-openai-api-key
 - Q&A 필터의 프로젝트/카테고리/문서 유형/태그는 `match_document_chunks` 검색 조건으로 전달됩니다.
 - 왼쪽 최근 업무 히스토리는 `chat_logs` 기반으로 최근 질문, 일시, 출처 수, 프로젝트명을 보여주며 클릭 시 저장된 질문/답변 상세를 표시합니다.
 - 업무 검색은 답변 생성이 아니라 업로드 문서와 매칭 chunk를 찾는 화면입니다. Q&A는 검색된 chunk를 context로 사용해 문서 근거 안에서만 답변합니다.
+
+## 운영 전 체크리스트
+
+- Vercel Production/Preview 환경에 `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SECRET_KEY` 또는 `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`가 모두 등록되어 있는지 확인합니다.
+- Supabase SQL Editor에서 최신 `supabase-schema.sql`을 실행하고, 마지막 `notify pgrst, 'reload schema';`까지 성공했는지 확인합니다.
+- Storage `documents` bucket이 private인지 확인하고, `storage.objects`에 anon select/read 정책이 남아 있지 않은지 확인합니다.
+- 브라우저 직접 업로드를 유지하는 동안 anon insert 정책은 `bucket_id = 'documents'` 및 `uploads/` 경로로 제한합니다.
+- Supabase Table Editor에서 `documents.file_path`, `documents.file_type`, `documents.status`, `documents.error_message`, `document_chunks.embedding`, `chat_logs.sources`, `chat_logs.filters` 컬럼이 있는지 확인합니다.
+- Vercel 배포 후 TXT, PDF, DOCX 각각으로 `업로드 -> documents 등록 -> 인덱싱 -> Q&A -> 업무검색` 흐름을 한 번씩 점검합니다.
+- 인덱싱 실패 문서는 `documents.error_message`를 확인하고, 실패 원인이 OpenAI key, PDF 텍스트 추출, Storage 다운로드, schema cache 중 어디인지 분류합니다.
+- 내부 파일럿 전에는 service role 계정 사용 범위, RLS 정책, 업로드 가능한 사용자 범위를 다시 확정합니다.
